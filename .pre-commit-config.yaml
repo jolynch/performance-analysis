@@ -3,3 +3,4 @@
     hooks:
     -   id: trailing-whitespace
     -   id: flake8
+    -   id: autopep8-wrapper
