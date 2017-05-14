@@ -1,5 +1,8 @@
 python_performance_toolkit
 ==========================
+
+[![Build Status](https://travis-ci.org/jolynch/python_performance_toolkit.svg?branch=master)](https://travis-ci.org/jolynch/python_performance_toolkit)
+
 My collection of various ipython notebooks and useful command line scripts for
 analyzing performance of Python services and code. I also try to include
 useful tools for building or using other tools.
