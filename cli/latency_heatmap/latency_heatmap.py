@@ -3,13 +3,13 @@ from __future__ import print_function
 import argparse
 import csv
 import sys
-from collections import defaultdict
 from collections import Counter
+from collections import defaultdict
 from collections import namedtuple
 
-import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
+import numpy as np
 
 
 # Supported converters for different data formats
