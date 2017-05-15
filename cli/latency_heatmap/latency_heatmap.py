@@ -56,7 +56,7 @@ PlotData = namedtuple(
 def calculate_data(data_generator, min_num_values=40):
     buckets = defaultdict(list)
     min_time, max_time = sys.maxint, 0
-    min_latency, max_latency = sys.maxint, 0
+    min_latency, max_latency = sys.maxint, 1
     for time, latency in data_generator:
         buckets[time].append(latency)
         min_time, max_time = min(min_time, time), max(max_time, time)
