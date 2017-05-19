@@ -6,3 +6,4 @@ making nice plots for visualizing data I typically prototype them in Jupyter.
 
 Included Notebooks:
 * [Latency Heatmap](latency_heatmap/README.md)
+* [Service Capacity](service_capacity/README.md)
