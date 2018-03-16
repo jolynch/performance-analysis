@@ -10,7 +10,7 @@
 \hypersetup{
     colorlinks=true,
     linkcolor=blue,
-    filecolor=magenta,      
+    filecolor=magenta,
     urlcolor=cyan,
 }
 
@@ -29,14 +29,14 @@
   stringstyle={\color[rgb]{0.75,0.49,0.07}},
   breaklines=true,
   breakatwhitespace=true,
-  breaklines=true,                 
-  captionpos=b,                    
-  keepspaces=true,                 
-  numbers=left,                    
-  numbersep=5pt,                  
-  showspaces=false,                
+  breaklines=true,
+  captionpos=b,
+  keepspaces=true,
+  numbers=left,
+  numbersep=5pt,
+  showspaces=false,
   showstringspaces=false,
-  showtabs=false,                  
+  showtabs=false,
   tabsize=2,
   sensitive=true,
 }
@@ -112,14 +112,14 @@ Now that we can model the expected recovery time, we begin the failure model by 
 \end{align}
 \end{subequations}
 
-Equation \ref{availa} follows from the CDF of an exponential distribution with parameter $\lambda_{eff}$, and equation \ref{availb} and \ref{availc} follow because we only care about failures during the recovery period of the neighboring nodes (which form a combined Poisson process with effective parameter $\lambda_{eff}$). If we model each node as a splitting Poisson process with parameter $\lambda$ and splitting probability $P(outage|failure)$, then each node forms an outage Poisson process with parameter $\lambda_{split} = \lambda * P(outage|failure)$. If we then join the $n$ such processes, we have a resulting global Poisson process with parameter $\lambda_{global} = \lambda_{split} * n$. This yields equation \ref{outage}, which models the average number of outages over an interval $\tau$. 
+Equation \ref{availa} follows from the CDF of an exponential distribution with parameter $\lambda_{eff}$, and equation \ref{availb} and \ref{availc} follow because we only care about failures during the recovery period of the neighboring nodes (which form a combined Poisson process with effective parameter $\lambda_{eff}$). If we model each node as a splitting Poisson process with parameter $\lambda$ and splitting probability $P(outage|failure)$, then each node forms an outage Poisson process with parameter $\lambda_{split} = \lambda * P(outage|failure)$. If we then join the $n$ such processes, we have a resulting global Poisson process with parameter $\lambda_{global} = \lambda_{split} * n$. This yields equation \ref{outage}, which models the average number of outages over an interval $\tau$.
 
 \begin{empheq}[box=\fbox]{align} \label{outage}
 \begin{split}
     E[outages] & = \lambda_{global} * \tau \\
     & = (n * \lambda_{split}) * \tau \\
     & = (n * (\lambda * P(outage|failure))) * \tau \\
-    & = (n * (\lambda * (1 - e^{-E[T_{recovery}] * E[n_{neighbors}] * \lambda}))) * \tau 
+    & = (n * (\lambda * (1 - e^{-E[T_{recovery}] * E[n_{neighbors}] * \lambda}))) * \tau
 \end{split}
 \end{empheq}
 
@@ -156,7 +156,7 @@ In the case with only \texttt{4} \texttt{vnodes}, the availability is much bette
 
 
 We can clearly see in Fig.\ref{fig:outages_small_vnodes} that small numbers of vnodes do not appreciably change availability (due to the streaming benefits), but as the number of vnodes gets large we rapidly lose large amounts of availability until we level out after the number of vnodes passes the number of nodes.
- 
+
 \begin{figure}[h!]
     \centering
     \includegraphics[width=1.0\textwidth]{images/outages_vnodes_small.png}
@@ -200,11 +200,11 @@ As we can clearly see, as we add more \texttt{vnodes} we must add fewer physical
 
 
 \section{Conclusion}
-We have shown using a reasonable model that using a number of tokens per node (\texttt{vnodes}) greater than the number of physical nodes in the cluster significantly increases the expected outages per year, with default settings causing up to 10x more outages. This availability is traded away for more even distribution of data and the ability to add fewer nodes and still maintain even distribution. We believe, however, that a reasonable middle ground exists in the \textbf{4-16 vnode range} where the streaming benefits mostly counteract the additional risky neighbors and therefore the overall probability of outage is still quite low. At the same time you can still scale up with \textit{10x fewer} nodes than in the single token case. Changing the default tokens per node in \texttt{cassandra.yaml} from 256 to 16 would yield \textbf{10x higher availability} and still have \textbf{10x better scalability} than single token clusters.  
+We have shown using a reasonable model that using a number of tokens per node (\texttt{vnodes}) greater than the number of physical nodes in the cluster significantly increases the expected outages per year, with default settings causing up to 10x more outages. This availability is traded away for more even distribution of data and the ability to add fewer nodes and still maintain even distribution. We believe, however, that a reasonable middle ground exists in the \textbf{4-16 vnode range} where the streaming benefits mostly counteract the additional risky neighbors and therefore the overall probability of outage is still quite low. At the same time you can still scale up with \textit{10x fewer} nodes than in the single token case. Changing the default tokens per node in \texttt{cassandra.yaml} from 256 to 16 would yield \textbf{10x higher availability} and still have \textbf{10x better scalability} than single token clusters.
 
 \begin{thebibliography}{9}
 
-\bibitem{vnodes} 
+\bibitem{vnodes}
 Brandon Williams: Virtual nodes in Cassandra 1.2
 \\\texttt{https://www.datastax.com/dev/blog/virtual-nodes-in-cassandra-1-2}
 
@@ -369,7 +369,7 @@ plt.legend(fontsize=16)
 
 # In[13]:
 
-# Observe impact of vnodes on Scale Up Balancing 
+# Observe impact of vnodes on Scale Up Balancing
 plt.figure(figsize=(15,10))
 plt.title("Cassandra Scale Up",fontsize=20)
 plt.ylabel("Number of Nodes needed to Scale Up", fontsize=16)
@@ -432,7 +432,7 @@ def run_simulate(l, neighbors, nodes):
         print("Run {0} gave {1:.3f} outages/year".format(r, outages_per_year))
         rs.append(outages_per_year)
     print("Simulation outages/year: ", sum(rs) / len(rs))
-    
+
 def run_simulate_naive(l, neighbors, nodes):
     p_split = p_outage_given_failure(recovery, neighbors, l)
     l_split = l * p_split
@@ -444,9 +444,9 @@ def run_simulate_naive(l, neighbors, nodes):
         ##failure_years = [int(x/year) for x in o]
         num_years = max(o) / year
         rs.append(events / num_years)
-    print("Simple simulation outages/year: ", sum(rs) / len(rs))    
-    
-    
+    print("Simple simulation outages/year: ", sum(rs) / len(rs))
+
+
 print(p_outage_given_failure(recovery, num_neighbors(nodes, vnodes, rf), arate))
 print(vnodes, arate, nodes, rf, bw_in, bw_out, recovery, num_neighbors(nodes, vnodes, rf))
 print("Predicted outages/year:", compute_outage(vnodes, arate, nodes, rf, bw_in, bw_out))
