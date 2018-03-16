@@ -64,35 +64,79 @@
 \maketitle
 
 \section{Introduction}
-With the addition of \textt{vnodes} \cite{vnodes} in version 1.2, Cassandra made it easier to balance a dataset across cluster nodes. With vnodes, the variance of data size held by any one host decreases. vnodes also afford the ability to easily change the number of hosts participating in a cluster, which previously was conducive only to doubling and halving.
+With the addition of \textt{vnodes} \cite{vnodes} in version 1.2, Cassandra
+made it easier to balance a dataset across cluster nodes. With vnodes, the
+variance of data size held by any one host decreases. vnodes also afford the
+ability to easily change the number of hosts participating in a cluster, which
+previously was conducive only to doubling and halving.
 
-In return for easier operability, vnodes trade off availability. As we document in this report, the availability cost of vnodes is quantifiable, and unavoidable. We present a model of the availability of a single-datacenter Cassandra cluster under failures. We attempt to predict, for a given cluster configuration, what availability guarantees are feasible.
+In return for easier operability, vnodes trade off availability. As we document
+in this report, the availability cost of vnodes is quantifiable, and
+unavoidable. We present a model of the availability of a single-datacenter
+Cassandra cluster under failures. We attempt to predict, for a given cluster
+configuration, what availability guarantees are feasible.
 
-Based on our model, we conclude that the Cassandra default of 256 virtual nodes per physical host is unwise, as it results in steadily rising chance of unavailability as cluster size grows. This is antithetical to Cassandra's design goal of fault-tolerance.
+Based on our model, we conclude that the Cassandra default of 256 virtual nodes
+per physical host is unwise, as it results in steadily rising chance of
+unavailability as cluster size grows. This is antithetical to Cassandra's
+design goal of fault-tolerance.
 
 \section{Description of the Problem}
 
-Data in Cassandra is distributed across the cluster nodes according to a hashing algorithm. Data is identified by a partition key. Partition keys are hashed by a hashing algorithm, yielding a bounded integer. The default algorithm assigns a 64-bit integer to each partition key. Each node in the cluster takes responsibility for storing data along a contiguous range of the integer space.
+Data in Cassandra is distributed across the cluster nodes according to a
+hashing algorithm. Data is identified by a partition key. Partition keys are
+hashed by a hashing algorithm, yielding a bounded integer. The default
+algorithm assigns a 64-bit integer to each partition key. Each node in the
+cluster takes responsibility for storing data along a contiguous range of the
+integer space.
 
-Cassandra clusters achieve fault-tolerance by storing multiple copies of each piece of data. The quantity of copies (replication factor) is configurable, but is typically an odd number, with three being most common. Higher replication factors achieve greater fault-tolerance, at the cost of increased storage requirements.
+Cassandra clusters achieve fault-tolerance by storing multiple copies of each
+piece of data. The quantity of copies (replication factor) is configurable, but
+is typically an odd number, with three being most common. Higher replication
+factors achieve greater fault-tolerance, at the cost of increased storage
+requirements.
 
-Nodes in a Cassandra cluster are assigned a token: an integer value which fixes the end of its token range. The start of each range is variable, depending on the location of tokens held by other nodes in the cluster. To achieve a replication factor of one, a node's owned token range will extend from its left neighbor's token to its own. With RF=1, the failure of any node will make that node's token range unavailable for reads or writes. Since the failure of
-
-
-
-
+Nodes in a Cassandra cluster are assigned a token: an integer value which fixes
+the end of its token range. The start of each range is variable, depending on
+the location of tokens held by other nodes in the cluster. To achieve a
+replication factor of one, a node's owned token range will extend from its left
+neighbor's token to its own. With RF=1, the failure of any node will make that
+node's token range unavailable for reads or writes. Since the failure of
 
 So long as any node
 
 
-In Cassandra's data placement strategy, availability is only compromised if physical nodes that own the same range fail before nodes can recover. Prior models attempted to model Cassandra's failure modes \cite{dataloss}, but they do not take into account the recovery aspect of Cassandra where it automatically \footnote{Not exactly automatically, but with the right \href{https://github.com/Netflix/Priam}{automation} it can be automatic} streams lost data to new replicas. We approach the problem from a different direction, opting instead to model outages as a combination of losing a single node plus losing a neighboring node that owns an intersecting token range before recovery finishes, causing \texttt{UnavailableExceptions} to clients. We do not care about the proportion of the ring that is unavailable or for how long as any unavailability is unacceptable to customers. Using this model we show that the Cassandra default of 256 tokens per node is an unwise choice, and a drastically smaller default should be chosen to more fairly balance the tradeoffs.
+In Cassandra's data placement strategy, availability is only compromised if
+physical nodes that own the same range fail before nodes can recover. Prior
+models attempted to model Cassandra's failure modes \cite{dataloss}, but they
+do not take into account the recovery aspect of Cassandra where it
+automatically \footnote{Not exactly automatically, but with the right
+\href{https://github.com/Netflix/Priam}{automation} it can be automatic}
+streams lost data to new replicas. We approach the problem from a different
+direction, opting instead to model outages as a combination of losing a single
+node plus losing a neighboring node that owns an intersecting token range
+before recovery finishes, causing \texttt{UnavailableExceptions} to clients. We
+do not care about the proportion of the ring that is unavailable or for how
+long as any unavailability is unacceptable to customers. Using this model we
+show that the Cassandra default of 256 tokens per node is an unwise choice, and
+a drastically smaller default should be chosen to more fairly balance the
+tradeoffs.
 
 \section{Analysis}
-Before virtual nodes, a Cassandra node in an RF=3 cluster would inter-depend on at most 4 other nodes: its two left-neighbors and its two right-neighbors.
 
-By siting multiple token ranges within the responsibility of a single server, virtual nodes increase the interdependency
+We conduct our analysis on cluster with RF=3. Before virtual nodes, a Cassandra
+node in an RF=3 cluster would inter-depend on exactly 4 other nodes: its two
+left-neighbors and its two
+right-neighbors.
 
-Virtual nodes decrease availability by coupling physical nodes together, but they theoretically increase the speed that you can recover nodes \footnote{In our experience, at least with Cassandra 2.x and 3.0.x, inbound streaming tops out at significantly under line rate, but this simply makes this model conservative}. For the purposes of this analysis:
+By siting multiple token ranges within the responsibility of a single server,
+virtual nodes increase the interdependency
+
+Virtual nodes decrease availability by coupling physical nodes together, but
+they theoretically increase the speed that you can recover nodes \footnote{In
+our experience, at least with Cassandra 2.x and 3.0.x, inbound streaming tops
+out at significantly under line rate, but this simply makes this model
+conservative}. For the purposes of this analysis:
 
 \begin{conditions}
  n       &  number of hosts in the cluster \\
@@ -104,10 +148,16 @@ Virtual nodes decrease availability by coupling physical nodes together, but the
  B_{out} &  maximum outgoing bandwidth of a stream (MB/s) \\
 \end{conditions}
 
-$n$ and $S$ are details of a particular Cassandra deployment, $v$ and $B_{out}$ are configuration options in \texttt{cassandra.yaml}, $R$ is determined by the keyspace replication strategy and $\lambda$ and $B_{inc}$ are determined by the hardware Cassandra is deployed to.
+$n$ and $S$ are details of a particular Cassandra deployment, $v$ and $B_{out}$
+are configuration options in \texttt{cassandra.yaml}, $R$ is determined by the
+keyspace replication strategy and $\lambda$ and $B_{inc}$ are determined by the
+hardware Cassandra is deployed to.
 
 \subsection{Availability Model}
-Crucial to the availability calculation is how quickly nodes can recover. The longer a node takes to recover, the longer a second failure can occur and cause an outage. We model this with the following equation:
+
+Crucial to the availability calculation is how quickly nodes can recover. The
+longer a node takes to recover, the longer a second failure can occur and cause
+an outage. We model this with the following equation:
 
 \begin{subequations} \label{recovery}
     \begin{align}
@@ -120,15 +170,43 @@ Crucial to the availability calculation is how quickly nodes can recover. The lo
     \end{align}
 \end{subequations}
 
-Equations \ref{recoverya} through \ref{recoveryc} follow from a slight simplification of the Cassandra token placement algorithm and the assumption that the number of racks in a datacenter equals the number of replicas $R$ \cite{replication}. For example, in cloud environments Cassandra racks generally map 1:1 with availability zones and this assumption holds in every cloud environment (AWS, GCE, Azure, etc...). Given this assumption, for every additional token, a physical node gains $R - 1$ replica nodes. This can be seen as making $v * (R - 1)$ choices of $n - \frac{n}{R}$ distinct items, and asking what is the expected number of distinct items, which leads to equation \ref{recoveryc} as this is a variant on the Birthday Problem \cite{neighbors}. The rest of \ref{recovery} follows from dividing the per node dataset size by the maximum effective bandwidth to a recovering node. This gives us what we dub the ``critical window'' where any neighbor failing will cause a token range to lose quorum.
+Equations \ref{recoverya} through \ref{recoveryc} follow from a slight
+simplification of the Cassandra token placement algorithm and the assumption
+that the number of racks in a datacenter equals the number of replicas $R$
+\cite{replication}. For example, in cloud environments Cassandra racks
+generally map 1:1 with availability zones and this assumption holds in every
+cloud environment (AWS, GCE, Azure, etc...). Given this assumption, for every
+additional token, a physical node gains $R - 1$ replica nodes. This can be seen
+as making $v * (R - 1)$ choices of $n - \frac{n}{R}$ distinct items, and asking
+what is the expected number of distinct items, which leads to equation
+\ref{recoveryc} as this is a variant on the Birthday Problem \cite{neighbors}.
+The rest of \ref{recovery} follows from dividing the per node dataset size by
+the maximum effective bandwidth to a recovering node. This gives us what we dub
+the ``critical window'' where any neighbor failing will cause a token range to
+lose quorum.
 
-From equation \ref{recovery} we can see that as $v$ increases, we get faster streaming until we reach diminishing returns because we have saturated the inbound network of the joining node. At that point additional streams do not help speed recovery.
+From equation \ref{recovery} we can see that as $v$ increases, we get faster
+streaming until we reach diminishing returns because we have saturated the
+inbound network of the joining node. At that point additional streams do not
+help speed recovery.
 
-We construct our model for R = 3. Under R = 3, the failure of two interdependent nodes leaves some token range with only a single active node. The remaining node can continue to serve reads and writes, but \emph{cannot} produce a quorum. We consider any lack of quorum, anywhere in the cluster, to be an outage.
+We construct our model for R = 3. Under R = 3, the failure of two
+interdependent nodes leaves some token range with only a single active node.
+The remaining node can continue to serve reads and writes, but \emph{cannot}
+produce a quorum. We consider any lack of quorum, anywhere in the cluster, to
+be an outage.
 
-Now that we can model the expected recovery time, we begin the failure model by assuming that nodes fail as independent Poisson processes with parameter $\lambda$. Note that modeling node failures as a Poisson process represents a "best case scenario" for cluster availability: real-life computers are not so polite that they fail in a manner completely uncorrelated with their peers.
+Now that we can model the expected recovery time, we begin the failure model by
+assuming that nodes fail as independent Poisson processes with parameter
+$\lambda$. Note that modeling node failures as a Poisson process represents a
+"best case scenario" for cluster availability: real-life computers are not so
+polite that they fail in a manner completely uncorrelated with their peers.
 
-Under such a model the inter-arrival time of node failures follows an exponential distribution with parameter $\lambda$, and therefore once a single node failure happens, we lose a second replica of an overlapping range before the recovery finishes with probability:
+Under such a model the inter-arrival time of node failures follows an
+exponential distribution with parameter $\lambda$, and therefore once a single
+node failure happens, we lose a second replica of an overlapping range before
+the recovery finishes with probability:
+
 \begin{subequations} \label{avail}
 \begin{align}
         P(outage|failure) & = F(\tau; \lambda_{eff}) \\ \label{availa}
@@ -139,7 +217,17 @@ Under such a model the inter-arrival time of node failures follows an exponentia
 \end{align}
 \end{subequations}
 
-Equation \ref{availa} follows from the CDF of an exponential distribution with parameter $\lambda_{eff}$, and equation \ref{availb} and \ref{availc} follow because we only care about failures during the recovery period of the neighboring nodes (which form a combined Poisson process with effective parameter $\lambda_{eff}$). If we model each node as a splitting Poisson process with parameter $\lambda$ and splitting probability $P(outage|failure)$, then each node forms an outage Poisson process with parameter $\lambda_{split} = \lambda * P(outage|failure)$. If we then join the $n$ such processes, we have a resulting global Poisson process with parameter $\lambda_{global} = \lambda_{split} * n$. This yields equation \ref{outage}, which models the average number of outages over an interval $\tau$.
+Equation \ref{availa} follows from the CDF of an exponential distribution with
+parameter $\lambda_{eff}$, and equation \ref{availb} and \ref{availc} follow
+because we only care about failures during the recovery period of the
+neighboring nodes (which form a combined Poisson process with effective
+parameter $\lambda_{eff}$). If we model each node as a splitting Poisson
+process with parameter $\lambda$ and splitting probability $P(outage|failure)$,
+then each node forms an outage Poisson process with parameter $\lambda_{split}
+= \lambda * P(outage|failure)$. If we then join the $n$ such processes, we have
+a resulting global Poisson process with parameter $\lambda_{global} =
+\lambda_{split} * n$. This yields equation \ref{outage}, which models the
+average number of outages over an interval $\tau$.
 
 \begin{empheq}[box=\fbox]{align} \label{outage}
 \begin{split}
@@ -150,7 +238,12 @@ Equation \ref{availa} follows from the CDF of an exponential distribution with p
 \end{split}
 \end{empheq}
 
-From this model we can see that availability is compromised by increasing the number of nodes ($n$), increasing the failure rate of those nodes ($\lambda$), increasing the number of tokens per node ($v$), or decreasing the streaming bandwidth. To see how badly availability reacts with plausible default settings on a 96 node cluster in a cloud environment with machine failure rate $\lambda=\frac{0.25}{year}$.
+From this model we can see that availability is compromised by increasing the
+number of nodes ($n$), increasing the failure rate of those nodes ($\lambda$),
+increasing the number of tokens per node ($v$), or decreasing the streaming
+bandwidth. To see how badly availability reacts with plausible default settings
+on a 96 node cluster in a cloud environment with machine failure rate
+$\lambda=\frac{0.25}{year}$.
 
 \begin{conditions}
  n       &  96 \\
@@ -163,6 +256,7 @@ From this model we can see that availability is compromised by increasing the nu
 \end{conditions}
 
 Modeling this system for a year, on average we expect ~0.03 failures per year:
+
 \begin{equation}
     \begin{split}
     A & = 96 * 0.25 * (1 - e^{-E[T_{recovery}] * E[n_{neighbors}] * \lambda}) \\
@@ -171,7 +265,8 @@ Modeling this system for a year, on average we expect ~0.03 failures per year:
     \end{split}
 \end{equation}
 
-In the case with only \texttt{4} \texttt{vnodes}, the availability is much better with only ~0.0035 failures per year, a full 10x more availability!
+In the case with only \texttt{4} \texttt{vnodes}, the availability is much
+better with only ~0.0035 failures per year, a full 10x more availability!
 
 \begin{equation}
     \begin{split}
@@ -182,7 +277,11 @@ In the case with only \texttt{4} \texttt{vnodes}, the availability is much bette
 \end{equation}
 
 
-We can clearly see in Fig.\ref{fig:outages_small_vnodes} that small numbers of vnodes do not appreciably change availability (due to the streaming benefits), but as the number of vnodes gets large we rapidly lose large amounts of availability until we level out after the number of vnodes passes the number of nodes.
+We can clearly see in Fig.\ref{fig:outages_small_vnodes} that small numbers of
+vnodes do not appreciably change availability (due to the streaming benefits),
+but as the number of vnodes gets large we rapidly lose large amounts of
+availability until we level out after the number of vnodes passes the number of
+nodes.
 
 \begin{figure}[h!]
     \centering
@@ -191,7 +290,16 @@ We can clearly see in Fig.\ref{fig:outages_small_vnodes} that small numbers of v
     \label{fig:outages_small_vnodes}
 \end{figure}
 
-In Fig.\ref{fig:outages_all_vnodes} we see the effects of varying the failure rate of machines, and observe that this has a significant impact on the availability of a Cassandra cluster running with \texttt{vnodes}. In particular, doubling the rate of machine failures can more than double the expected number of yearly outages. This makes intuitive sense because as we add more tokens to each physical node, we are increasing the number of vulnerable replicas during a single node failure. Rack placement helps a lot to limit the number of potential replicas to only those residing in other racks, but it is not enough to prevent likely outage with a high number of tokens per node.
+In Fig.\ref{fig:outages_all_vnodes} we see the effects of varying the failure
+rate of machines, and observe that this has a significant impact on the
+availability of a Cassandra cluster running with \texttt{vnodes}. In
+particular, doubling the rate of machine failures can more than double the
+expected number of yearly outages. This makes intuitive sense because as we add
+more tokens to each physical node, we are increasing the number of vulnerable
+replicas during a single node failure. Rack placement helps a lot to limit the
+number of potential replicas to only those residing in other racks, but it is
+not enough to prevent likely outage with a high number of tokens per node.
+
 \begin{figure}[h!]
     \centering
     \includegraphics[width=1.0\textwidth]{images/outages_all_vnodes.png}
@@ -199,7 +307,12 @@ In Fig.\ref{fig:outages_all_vnodes} we see the effects of varying the failure ra
     \label{fig:outages_all_vnodes}
 \end{figure}
 
-It is also interesting to note that as clusters get larger, holding everything else constant, they become \textit{less available} with more machines. This intuitively makes sense because as you increase the number of nodes significantly past RF, you are creating more replicas that can fail and be vulnerable to a second failure. This is shown in figure Fig. \ref{fig:outages_nodes}.
+It is also interesting to note that as clusters get larger, holding everything
+else constant, they become \textit{less available} with more machines. This
+intuitively makes sense because as you increase the number of nodes
+significantly past RF, you are creating more replicas that can fail and be
+vulnerable to a second failure. This is shown in figure Fig.
+\ref{fig:outages_nodes}.
 
 \begin{figure}[H]
     \centering
@@ -210,13 +323,30 @@ It is also interesting to note that as clusters get larger, holding everything e
 
 
 \subsection{Virtual Nodes, the Benefits}
-Having a number of tokens greater than 1 per physical nodes trades off availability, but it gains data distribution and operations benefits. In particular, a major problem pre-$vnode$ was ``hot'' nodes, where one replica may have significantly more data than other nodes. This was particularly problematic when scaling up the cluster because in order to keep data evenly distributed you had to effectively double the cluster. In particular to add capacity to a cluster of size $n$ with $v$ vnodes you need proportionally fewer new nodes $N$ to do so. Now that Cassandra token placement is reasonably good at inserting new tokens where they are needed to balance the ring \cite{tokenallocation}, we can model the number of nodes needed to scale up with eq \ref{eq:scaling} as seen in figure \ref{fig:scaling}.
+
+Having a number of tokens greater than 1 per physical nodes trades off
+availability, but it gains data distribution and operations benefits. In
+particular, a major problem pre-$vnode$ was ``hot'' nodes, where one replica
+may have significantly more data than other nodes. This was particularly
+problematic when scaling up the cluster because in order to keep data evenly
+distributed you had to effectively double the cluster. In particular to add
+capacity to a cluster of size $n$ with $v$ vnodes you need proportionally fewer
+new nodes $N$ to do so. Now that Cassandra token placement is reasonably good
+at inserting new tokens where they are needed to balance the ring
+\cite{tokenallocation}, we can model the number of nodes needed to scale up
+with eq \ref{eq:scaling} as seen in figure \ref{fig:scaling}.
 
 \begin{equation} \label{eq:scaling}
     N = \ceil*{\frac{n}{v}}
 \end{equation}
 
-As we can clearly see, as we add more \texttt{vnodes} we must add fewer physical nodes to the cluster at a time in order to keep it balanced. While 1 token per node requires doubling, 16 tokens per node reduces this, naturally, by a factor of 16, which is a \textit{significant} improvement. For a 96 node cluster instead of needing 96 more machines, we can add in increments of 6. The operational savings only get better as we add more tokens per node, until we reach the size of the cluster at which point we reach diminishing returns.
+As we can clearly see, as we add more \texttt{vnodes} we must add fewer
+physical nodes to the cluster at a time in order to keep it balanced. While 1
+token per node requires doubling, 16 tokens per node reduces this, naturally,
+by a factor of 16, which is a \textit{significant} improvement. For a 96 node
+cluster instead of needing 96 more machines, we can add in increments of 6. The
+operational savings only get better as we add more tokens per node, until we
+reach the size of the cluster at which point we reach diminishing returns.
 
 \begin{figure}[H]
     \centering
@@ -225,9 +355,21 @@ As we can clearly see, as we add more \texttt{vnodes} we must add fewer physical
     \label{fig:scaling}
 \end{figure}
 
-
 \section{Conclusion}
-We have shown using a reasonable model that using a number of tokens per node (\texttt{vnodes}) greater than the number of physical nodes in the cluster significantly increases the expected outages per year, with default settings causing up to 10x more outages. This availability is traded away for more even distribution of data and the ability to add fewer nodes and still maintain even distribution. We believe, however, that a reasonable middle ground exists in the \textbf{4-16 vnode range} where the streaming benefits mostly counteract the additional risky neighbors and therefore the overall probability of outage is still quite low. At the same time you can still scale up with \textit{10x fewer} nodes than in the single token case. Changing the default tokens per node in \texttt{cassandra.yaml} from 256 to 16 would yield \textbf{10x higher availability} and still have \textbf{10x better scalability} than single token clusters.
+
+We have shown using a reasonable model that using a number of tokens per node
+(\texttt{vnodes}) greater than the number of physical nodes in the cluster
+significantly increases the expected outages per year, with default settings
+causing up to 10x more outages. This availability is traded away for more even
+distribution of data and the ability to add fewer nodes and still maintain even
+distribution. We believe, however, that a reasonable middle ground exists in
+the \textbf{4-16 vnode range} where the streaming benefits mostly counteract
+the additional risky neighbors and therefore the overall probability of outage
+is still quite low. At the same time you can still scale up with \textit{10x
+fewer} nodes than in the single token case. Changing the default tokens per
+node in \texttt{cassandra.yaml} from 256 to 16 would yield \textbf{10x higher
+availability} and still have \textbf{10x better scalability} than single token
+clusters.
 
 \begin{thebibliography}{9}
 
