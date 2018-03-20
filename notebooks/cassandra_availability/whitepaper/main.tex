@@ -54,10 +54,12 @@
 \title{Cassandra Availability with Virtual Nodes}
 \author{
   Joseph Lynch\\
-  \texttt{joe.e.lynch@gmail.com}
+  \texttt{joe.e.lynch@gmail.com}\\
+  \texttt{josephl@netflix.com}
   \and
   Josh Snyder\\
-  \texttt{josh@code406.com}
+  \texttt{josh@code406.com}\\
+  \texttt{joshs@netflix.com}
 }
 
 \begin{document}
@@ -65,33 +67,35 @@
 \maketitle
 
 \section{Introduction}
-When Cassandra introduced vnodes in version 1.2, cluster operators made new tradeoffs
+When Cassandra introduced vnodes in version 1.2, the database made new tradeoffs
 with respect to cluster maintainability and availability \cite{vnodes}. In particular,
-clusters became easier to scale and operate, but they lost \textit{significant}
-availability.
+large Cassandra clusters became easier to scale and operate, but they lost
+\textit{significant} availability.
 
-The main benefit of vnodes is that the variance of data size held by any one host
-decreases and operators can easily change the number of hosts participating in a
-cluster. In return, vnodes trade off availability. As we document in this report,
-the availability cost of vnodes is quantifiable, and unavoidable. We present a model
-of the availability of a single-datacenter Cassandra cluster under failures. We
-attempt to furthermore predict, for a given cluster configuration, what availability
-guarantees are feasible to give users of the database.
+The two main benefits of vnodes are that the variance in data size held by any
+one host decreases, and that operators can more easily change the number of
+hosts participating in a cluster. In return, vnodes trade off availability. As
+we document in this report, the availability cost of vnodes is both
+quantifiable and unavoidable. We present a model of the availability of a
+single-datacenter Cassandra cluster under failures. We attempt furthermore
+to predict, for a given cluster configuration, what availability guarantees
+can feasibly be promised to users of the database.
 
 Based on our model, we conclude that the Cassandra default of 256 virtual nodes
 per physical host is unwise, as it results in steadily rising chance of
-unavailability as cluster size grows. This is antithetical to Cassandra's
-design goal of fault-tolerance. We further use the model to argue for a middle
-ground which both achieves the maintainability goals of multiple vnodes and
-at the same time provides high fault tolerance.
+unavailability as cluster size grows. This increasing failure rate is
+antithetical to Cassandra's design goal of fault-tolerance. We further use
+the model to argue for a middle ground which both achieves the maintainability
+goals of multiple vnodes while at the same time providing higher fault-tolerance.
 
-If you are familiar with Cassandra internals, feel free to skip straight to
-\hyperref[sec:problem]{Problem Statement} and \hyperref[sec:analysis]{Analysis}.
+Section 2 introduces basics of the Cassandra hashing algorithm, and Section 3
+discusses situations that can degrade Cassandra service. Readers already familiar
+with Cassandra operations may wish to skip to section 4, \hyperref[sec:analysis]{Analysis}.
 
 \section{Cassandra Background}
 Data in Cassandra is distributed across the cluster hosts according to a
 consistent hashing algorithm. All data has a partition key, which Cassandra
-hashes to yield an integer bounded within the hash space. Each node in the
+hashes to yield an integer bounded within the hash space. Each host in the
 cluster takes responsibility for storing data along one or more contiguous
 ranges of the hash space as decided by the replication strategies assigned
 to the keyspaces on the cluster.
@@ -110,12 +114,12 @@ one token per physical host leads to ``virtual'' nodes. The start of each
 range is variable, depending on the location of tokens held by other nodes
 in the cluster. The space in the hash space between tokens are known as
 \textit{token ranges} and are the basis of all data replication. Depending on
-the keyspace replication strategy, and the placement of thes ``virtual'' nodes,
+the keyspace replication strategy, and the placement of the ``virtual'' nodes,
 different physical hosts will be chosen to store data in a token range.
 For example, to achieve a replication factor of two using a
-\texttt{SimpleStrategy} Cassandra assigns two different physical nodes to
+\texttt{SimpleStrategy} Cassandra assigns two different physical hosts to
 each token range, while with the \texttt{NetworkTopologyStrategy} Cassandra
-assures that data is replicated to physical nodes across datacenters and
+assures that data is replicated to physical hosts across datacenters and
 spread across racks as well. In all replication strategies, however, virtual
 nodes add additional neighbors to physical hosts.
 
@@ -139,13 +143,12 @@ unavailability is unacceptable to customers.
 
 \section{Analysis}
 \label{sec:analysis}
-We conduct our analysis on a cluster with $R=3$. Under $R=3$, the failure of
-two interdependent nodes leaves some token range with only a single active node.
-The remaining node can continue to serve reads and writes, but \emph{cannot}
-produce a quorum. We consider any lack of quorum, anywhere in the cluster, to
-be an outage.
+We conduct our analysis on a cluster with replication factor 3 ($R=3$). Under
+$R=3$, the failure of two interdependent nodes leaves their shared token range(s) with only a  single active node. The remaining node can continue to serve reads
+and writes, but \emph{cannot} produce a quorum. We consider any lack of quorum,
+anywhere in the cluster, to be an outage.
 
-Before virtual nodes, a host in an $RF=3$ cluster would inter-depend on 4
+Without virtual nodes, a host in an $RF=3$ cluster would inter-depend on 4
 other hosts: its two left-neighbors and two right-neighbors. If the cluster
 is small enough, the same node may serve as both a left-neighbor and a
 right-neighbor. For example on a cluster with three hosts, each node
@@ -155,23 +158,23 @@ inter-dependents. When a host places 256 virtual nodes into the ring, each
 vnode it places inter-depends with 2-4 other nodes.
 
 By adding multiple token ranges to the responsibility of a single server,
-virtual nodes increase the inter-dependency and decrease availability by
-coupling physical nodes together, but they also theoretically increase the
-speed that you can recover nodes \footnote{In our experience, at least with
-Cassandra 2.x and 3.0.x, inbound streaming tops out at significantly under
-line rate, but this simply makes this model conservative}.
+virtual nodes increase inter-dependency and decrease availability by
+coupling physical hosts together. Conversely, they theoretically increase the
+speed at which nodes can recover data by streaming\footnote{In our experience,
+at least with Cassandra 2.x and 3.0.x, inbound streaming tops out at significantly
+under line rate, but this simply makes this model conservative}.
+
 For the purposes of this analysis:
 
 \begin{conditions}
  n       &  number of hosts in the cluster \\
  \lambda &  average failure rate of hosts (1/interval) \\
  S       &  size of the dataset per host (MB) \\
- v       &  number of tokens per physical node \\
+ v       &  number of tokens per physical host \\
  R       &  replication factor (number of replicas per token) \\
- B_{inc} &  maximum incoming bandwidth of a joining physical node in (MB/s) \\
+ B_{inc} &  maximum incoming bandwidth of a joining physical host (MB/s) \\
  B_{out} &  maximum outgoing bandwidth of a stream (MB/s) \\
 \end{conditions}
-
 $n$ and $S$ are details of a particular Cassandra deployment, $v$ and $B_{out}$
 are configuration options in \texttt{cassandra.yaml}, $R$ is determined by the
 keyspace replication strategy and $\lambda$ and $B_{inc}$ are determined by the
@@ -184,7 +187,7 @@ Crucial to the availability calculation is how quickly nodes can recover. The
 longer a host takes to recover, the longer a second failure can occur and cause
 an outage. We model this in eq. \ref{recovery} as a variant of the Birthday
 Problem \cite{neighbors}. For each token, we choose a random $2 * (R - 1)$
-replica hosts, those that proceed and those that come after the token on the
+replica hosts, those that precede and those that follow the token on the
 Cassandra ring. This is a \textit{conservative} estimate of how many neighbors
 each additional token adds because actual Cassandra replication prohibits
 duplicates \cite{replication}. We then make the model even more conservative by
@@ -204,14 +207,14 @@ This model presents a \textit{best case} for vnodes.
     \end{align}
 \end{subequations}
 
-This is a very conservative model, but for cloud environments like where
+This is a very conservative model, but for cloud environments like AWS where
 Cassandra racks generally map 1:1 with availability zones this kind of
-conservative model is reasonably accurate. The rest of \ref{recovery} follows
+conservative model is reasonably accurate. The rest of Eq. \ref{recovery} follows
 from dividing the per node dataset size by the maximum effective bandwidth to
 a recovering node. This gives us what we dub the ``critical window''
 where any neighbor failing will cause a token range to lose quorum.
 
-From equation \ref{recovery} we can see that as $v$ increases, we get faster
+From Eq. \ref{recovery} we can see that as $v$ increases, we get faster
 streaming until we reach diminishing returns because we have saturated the
 inbound network of the joining node. At that point additional streams do not
 help speed recovery.
@@ -245,10 +248,11 @@ parameter $\lambda_{eff}$).
 
 Now, if we model each host as a splitting Poisson process with parameter
 $\lambda$ and splitting probability $P(outage|failure)$, then each node
-forms an outage Poisson process with parameter $\lambda_{split} = \lambda * P(outage|failure)$. If we then join the $n$ such processes, we have
-a resulting global Poisson process with parameter $\lambda_{global} =
-\lambda_{split} * n$. This yields equation \ref{outage}, which models the
-average number of outages over an interval $\tau$.
+forms an outage Poisson process with parameter
+$\lambda_{split} = \lambda * P(outage|failure)$. If we then join the $n$
+such processes, we have a resulting global Poisson process with parameter
+$\lambda_{global} = \lambda_{split} * n$. This yields Eq. \ref{outage},
+which models the average number of outages over an interval $\tau$.
 
 \begin{empheq}[box=\fbox]{align} \label{outage}
 \begin{split}
@@ -279,7 +283,7 @@ $\lambda=\frac{25}{century}=\frac{0.25}{year}$.
 We model this over a century because the probabilities of outage are so low in a
 single cluster that in any reasonable time span, the most likely number of outages
 is zero. To fairly compare the different configuration options, we model this
-system for a century and find that, on average, we expect ~2.98 failures, or
+system for a century and find that, on average, we expect ~2.98 outages, or
 equivalently ~0.03 per year:
 
 \begin{equation}
@@ -327,7 +331,7 @@ during a single node failure. Rack placement helps a lot to limit the number
 of potential replicas to only those residing in other racks, but it is not
 enough to prevent likely outage with a high number of tokens per node.
 
-\begin{figure}[h!]
+\begin{figure}[H]
     \centering
     \includegraphics[width=1.0\textwidth]{images/outages_all_vnodes.png}
     \caption{Outages with Varying Tokens per Node}
@@ -338,9 +342,22 @@ It is also interesting to note that as clusters get larger, holding everything
 else constant, they become \textit{less available}. This intuitively makes
 sense because as you increase the number of hosts significantly past RF,
 you are creating more replicas that can fail and be vulnerable to a second
-failure. Virtual nodes \textit{exacerbate} the problems for large clusters, causing significantly higher outages at large cluster sizes. This is shown in figure Fig. \ref{fig:outages_nodes}.
+failure. Virtual nodes \textit{significantly exacerbate} the problems for
+large clusters ($n > 100$) causing substantially more outages at large cluster
+sizes. This is shown in figure Fig. \ref{fig:outages_nodes_mtbf} and
+Fig. \ref{fig:outages_nodes} . Fig \ref{fig:outages_nodes_mtbf} is
+particularly interesting because we can see with 256 vnodes, we rapidly
+approach an expected failure every year, compared to 16 vnodes where we
+expect an outage closer to every decade.
 
-\begin{figure}[H]
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=1.0\textwidth]{images/outages_nodes_mtbf.png}
+    \caption{MTBF with Varying Nodes in the Cluster}
+    \label{fig:outages_nodes_mtbf}
+\end{figure}
+
+\begin{figure}[h!]
     \centering
     \includegraphics[width=1.0\textwidth]{images/outages_nodes.png}
     \caption{Outages with Varying Nodes in the Cluster}
@@ -354,18 +371,18 @@ hosts are already neighbors with every possible host. As the cluster gets bigger
 small clusters have a constant number of neighbors, but large clusters gain more
 and more neighbors, leading to 10-20x more risk of failure.
 
-\begin{figure}[h]
+\begin{figure}[H]
     \centering
     \includegraphics[width=1.0\textwidth]{images/outages_nodes_small.png}
     \caption{Outages with Varying Nodes in the Cluster}
     \label{fig:outages_nodes_small}
 \end{figure}
 
-The odd wiggle pattern you can see is because rack awareness has an integer
-divide by 3, the \texttt{SimpleStrategy} graph is more smooth but also
-less available in Fig \ref{fig:outages_nodes_small_simple}.
+The odd wiggle pattern you can see happens because rack awareness removes $n/R$
+hosts from consideration; the \texttt{SimpleStrategy} graph is more smooth but also
+much less available in Fig \ref{fig:outages_nodes_small_simple}.
 
-\begin{figure}[h]
+\begin{figure}[H]
     \centering
     \includegraphics[width=1.0\textwidth]{images/outages_nodes_small_simple.png}
     \caption{Outages with Varying Nodes in the Cluster}
@@ -377,7 +394,7 @@ the default of 256 is quite unacceptable for large clusters.
 
 \subsection{Virtual Nodes, the Benefits}
 
-Having a number of tokens greater than 1 per physical nodes trades off
+Having a number of tokens greater than one per physical host trades off
 availability, but it gains data distribution and operations benefits. In
 particular, a major problem pre-vnode was ``hot'' nodes, where one replica
 may have significantly more data than other nodes. This was particularly
@@ -387,7 +404,7 @@ capacity to a cluster of size $n$ with $v$ vnodes you need proportionally fewer
 new nodes $N$ to do so. Now that Cassandra token placement is reasonably good
 at inserting new tokens where they are needed to balance the ring
 \cite{tokenallocation}, we can model the number of nodes needed to scale up
-with eq \ref{eq:scaling} as seen in figure \ref{fig:scaling}.
+with Eq. \ref{eq:scaling} as seen in Fig. \ref{fig:scaling}.
 
 \begin{equation} \label{eq:scaling}
     N = \ceil*{\frac{n}{v}}
@@ -401,7 +418,7 @@ cluster instead of needing 96 more machines, we can add in increments of 6. The
 operational savings only get better as we add more tokens per host, until we
 reach the size of the cluster at which point we reach diminishing returns.
 
-\begin{figure}[H]
+\begin{figure}[h!]
     \centering
     \includegraphics[width=1.0\textwidth]{images/scale_up.png}
     \caption{Nodes Required for Scaling Up}
@@ -411,18 +428,16 @@ reach the size of the cluster at which point we reach diminishing returns.
 \section{Conclusion}
 
 We have shown using a reasonable model that using a number of tokens per node
-vnodes greater than the number of physical nodes in the cluster significantly
-increases the expected outages, with default settings causing up to 10x more
+greater than the number of physical nodes in the cluster significantly increases
+the expected outages, with default settings causing orders of magnitude more
 frequent outages. This availability is traded away for more even distribution
 of data and the ability to add fewer nodes and still maintain even distribution.
 We believe, however, that a reasonable middle ground exists in the
 \textbf{4-16 vnode range} where the streaming benefits mostly counteract the
 additional risky neighbors and therefore the overall probability of outage is
-still quite low. At the same time you can still scale up with
-\textit{10x fewer} nodes than in the single token case. Changing the default
-tokens per node in \texttt{cassandra.yaml} from 256 to 16 would yield
-\textbf{10x higher availability} and still have \textbf{10x better scalability}
-than single token clusters.
+still quite low. Concretely, changing the default tokens per node in
+\texttt{cassandra.yaml} from 256 to 16 would yield \textbf{10x higher availability}
+than 256 and still have \textbf{10x better scalability} than single token clusters.
 
 \begin{thebibliography}{9}
 
@@ -460,10 +475,10 @@ Branimir Lambov: New token allocation algorithm in Cassandra 3.0
 Source code for all graphs is available on \href{https://github.com/jolynch/python_performance_toolkit/blob/master/notebooks/cassandra_availability/cassandra_availability.ipynb}{github} as well as reproduced below.
 \begin{lstlisting}[language=Python]
 
+
 # coding: utf-8
 
-# In[2]:
-
+# In[1]:
 
 from __future__ import print_function
 import math
@@ -472,8 +487,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from scipy.stats import poisson
+from scipy.stats import expon
 
-get_ipython().run_line_magic('matplotlib', 'inline')
+get_ipython().magic(u'matplotlib inline')
 
 # Boils down to "If I pick hosts 2 * (rf - 1) * vnode times, how many
 # distinct hosts will I have in expectation". Note that this is a slightly
@@ -546,7 +562,10 @@ def outage_stats(vnodes, failure_rate_per_century, num_nodes, rf, bw_in, bw_out,
         recovery_s, neighbors, failure_rate_per_century / century_seconds)
 
     lmb = global_rate(failure_rate_per_century, num_nodes, p_failure)
-    return (poisson.mean(lmb), poisson.interval(0.50, lmb), poisson.median(lmb))
+    return (
+        poisson.mean(lmb), poisson.interval(0.50, lmb), poisson.median(lmb),
+        expon.mean(scale=1/lmb), expon.interval(0.50, scale=1/lmb)
+    )
 
 # Returns outages _per century_
 def compute_outage(vnodes, failure_rate_per_century, num_nodes, rf, bw_in, bw_out, strategy='rack'):
@@ -568,8 +587,7 @@ for rate in (12.5, 25, 50, 100, 200):
     print(p)
 
 
-# In[3]:
-
+# In[2]:
 
 plt.figure(figsize=(15,10))
 plt.title("Cassandra Outages, {0} nodes".format(nodes), fontsize=20)
@@ -619,8 +637,45 @@ plt.fill_between(num_vnodes[:32], outage_lower, outage_upper, color='orange', al
 plt.legend(fontsize=16)
 
 
-# In[8]:
+# In[3]:
 
+# Hold failures constant, vary size of cluster
+# Look at MTBF
+plt.figure(figsize=(15,10))
+plt.title(
+    "Cassandra Outages, {1} failures / Century ".format(
+        vnodes, arate), fontsize=20)
+plt.ylabel("Expected Centuries Between Outages", fontsize=16)
+plt.xlabel("Number of Nodes in the Cluster", fontsize=16)
+plt.gca().grid(True, which='major', linestyle='-', color='k')
+plt.gca().grid(True, which='minor', linestyle='--')
+plt.gca().yaxis.set_minor_locator(matplotlib.ticker.AutoMinorLocator(4))
+plt.gca().xaxis.set_minor_locator(matplotlib.ticker.AutoMinorLocator(5))
+plt.tick_params(axis='both', which='major', labelsize=14, length=6)
+plt.tick_params(axis='both', which='minor', length=0)
+
+num_vnodes = (1, 4, 16, 256)
+num_nodes = range(3, 300)
+lines = []
+for v in num_vnodes:
+    outages = [outage_stats(v, arate, n, rf, bw_in, bw_out) for n in num_nodes]
+    outage_mean = [o[3] for o in outages]
+    outage_lower = [o[4][0] for o in outages]
+    outage_upper = [o[4][1] for o in outages]
+    line, = plt.semilogy(num_nodes, outage_mean, label="vnodes={0}".format(v))
+    lines.append(line)
+    plt.fill_between(
+        num_nodes, outage_lower, outage_upper, alpha=0.1,
+        label='vnodes={0} IQR'.format(v)
+    )
+
+plt.xlim(3, 300)
+plt.ylim(1/100.0, 100)
+
+iqr_patch = mpatches.Patch(color='gray', label='IQR')
+plt.legend(
+    handles=lines + [iqr_patch], loc='upper right', fontsize=16
+)
 
 # Hold failures constant, vary size of cluster
 plt.figure(figsize=(15,10))
@@ -636,10 +691,9 @@ plt.gca().xaxis.set_minor_locator(matplotlib.ticker.AutoMinorLocator(5))
 plt.tick_params(axis='both', which='major', labelsize=14, length=6)
 plt.tick_params(axis='both', which='minor', length=0)
 
-num_vnodes = (1, 4, 16, 64, 128)
+num_vnodes = (1, 4, 16, 256)
 num_nodes = range(3, 300)
 lines = []
-fills = []
 for v in num_vnodes:
     outages = [outage_stats(v, arate, n, rf, bw_in, bw_out) for n in num_nodes]
     outages = [outage_stats(v, arate, n, rf, bw_in, bw_out) for n in num_nodes]
@@ -648,18 +702,17 @@ for v in num_vnodes:
     outage_upper = [o[1][1] for o in outages]
     line, = plt.plot(num_nodes, outage_mean, label="vnodes={0}".format(v))
     lines.append(line)
-    fill = plt.fill_between(
+    plt.fill_between(
         num_nodes, outage_lower, outage_upper, alpha=0.1,
         label='vnodes={0} IQR'.format(v)
     )
-    fills.append(fill)
-
 
 plt.xlim(3, 300)
 iqr_patch = mpatches.Patch(color='gray', label='IQR')
 plt.legend(
     handles=lines + [iqr_patch], loc='upper left', fontsize=16
 )
+
 
 # Hold failures constant, vary size of cluster, NetworkTopologyStrategy
 plt.figure(figsize=(15,10))
@@ -675,7 +728,7 @@ plt.gca().xaxis.set_minor_locator(matplotlib.ticker.AutoMinorLocator(10))
 plt.tick_params(axis='both', which='major', labelsize=14, length=6)
 plt.tick_params(axis='both', which='minor', length=0)
 
-num_vnodes = (1, 4, 16, 64, 128)
+num_vnodes = (1, 4, 16, 256)
 num_nodes = range(3, 51)
 for v in num_vnodes:
     outages = [compute_outage(v, arate, n, rf, bw_in, bw_out, 'rack') for n in num_nodes]
@@ -686,8 +739,7 @@ plt.xlim(3, 50)
 plt.legend(fontsize=16)
 
 
-# In[5]:
-
+# In[4]:
 
 # Hold failures constant, vary size of cluster
 plt.figure(figsize=(15,10))
@@ -703,7 +755,7 @@ plt.gca().xaxis.set_minor_locator(matplotlib.ticker.AutoMinorLocator(10))
 plt.tick_params(axis='both', which='major', labelsize=14, length=6)
 plt.tick_params(axis='both', which='minor', length=0)
 
-num_vnodes = (1, 4, 16, 64, 128)
+num_vnodes = (1, 4, 16, 256)
 num_nodes = range(3, 51)
 for v in num_vnodes:
     outages = [compute_outage(v, arate, n, rf, bw_in, bw_out, 'simple') for n in num_nodes]
@@ -714,12 +766,11 @@ plt.xlim(3, 50)
 plt.legend(fontsize=16)
 
 
-# In[6]:
-
+# In[5]:
 
 # Observe impact of vnodes on Scale Up Balancing
 plt.figure(figsize=(15,10))
-plt.title("Cassandra Scale Up",fontsize=20)
+plt.title("Cassandra Balanced Scaling",fontsize=20)
 plt.ylabel("Number of Nodes needed to Scale Up", fontsize=16)
 plt.xlabel("Number of Nodes in the Cluster", fontsize=16)
 plt.gca().grid(True, which='major', linestyle='-', color='k')
@@ -729,7 +780,7 @@ plt.gca().xaxis.set_minor_locator(matplotlib.ticker.AutoMinorLocator(5))
 plt.tick_params(axis='both', which='major', labelsize=14, length=6)
 plt.tick_params(axis='both', which='minor', length=0)
 
-num_vnodes = (1, 4, 16, 64, 128)
+num_vnodes = (1, 4, 16, 256)
 num_nodes = range(3, 256)
 for v in num_vnodes:
     scale_up = [math.ceil(float(n) / v) for n in num_nodes]
@@ -740,8 +791,7 @@ plt.xlim(3, 256)
 plt.legend(fontsize=16)
 
 
-# In[7]:
-
+# In[6]:
 
 import itertools
 import random
@@ -810,7 +860,6 @@ print("Predicted outages/century:", compute_outage(vnodes, arate, nodes, rf, bw_
 #run_simulate(arate, num_neighbors(nodes, vnodes, rf), nodes)
 run_simulate_naive(arate, num_neighbors(nodes, vnodes, rf), nodes)
 #run_simulate(arate, num_neighbors(nodes, vnodes, rf), nodes)
-
 \end{lstlisting}
 
 \end{document}
