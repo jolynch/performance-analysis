@@ -8,6 +8,8 @@
 \usepackage{listings}
 \usepackage{hyperref}
 \usepackage{parskip}
+\usepackage{url}
+
 \hypersetup{
     colorlinks=true,
     linkcolor=blue,
@@ -51,7 +53,10 @@
   {\end{tabular}\\[\belowdisplayskip]}
 
 
-\title{Cassandra Availability with Virtual Nodes}
+\title{DRAFT: Cassandra Availability with Virtual Nodes}
+% * <joe.e.lynch@gmail.com> 2018-03-22T18:33:37.587Z:
+%
+% ^.
 \author{
   Joseph Lynch\\
   \texttt{joe.e.lynch@gmail.com}\\
@@ -65,18 +70,17 @@
 \begin{document}
 
 \maketitle
-
 \section{Introduction}
 When Cassandra introduced vnodes in version 1.2, the database made new tradeoffs
 with respect to cluster maintainability and availability \cite{vnodes}. In particular,
 large Cassandra clusters became easier to scale and operate, but they lost
-\textit{significant} availability.
+availability when replacing nodes.
 
 The two main benefits of vnodes are that the variance in data size held by any
 one host decreases, and that operators can more easily change the number of
-hosts participating in a cluster. In return, vnodes trade off availability. As
-we document in this report, the availability cost of vnodes is both
-quantifiable and unavoidable. We present a model of the availability of a
+hosts participating in a cluster. In return, vnodes trade off availability during
+node failures. As we document in this report, the availability cost of vnodes is
+both quantifiable and unavoidable. We present a model of the availability of a
 single-datacenter Cassandra cluster under failures. We attempt furthermore
 to predict, for a given cluster configuration, what availability guarantees
 can feasibly be promised to users of the database.
@@ -85,14 +89,18 @@ Based on our model, we conclude that the Cassandra default of 256 virtual nodes
 per physical host is unwise, as it results in steadily rising chance of
 unavailability as cluster size grows. This increasing failure rate is
 antithetical to Cassandra's design goal of fault-tolerance. We further use
-the model to argue for a middle ground which both achieves the maintainability
-goals of multiple vnodes while at the same time providing higher fault-tolerance.
+the model to argue for a middle ground of 4-16 virtual nodes which both achieves
+operability goals of vnodes while at the same time providing much higher
+fault-tolerance, especially for large clusters.
 
-Section 2 introduces basics of the Cassandra hashing algorithm, and Section 3
-discusses situations that can degrade Cassandra service. Readers already familiar
-with Cassandra operations may wish to skip to section 4, \hyperref[sec:analysis]{Analysis}.
+Section \ref{sec:background} introduces basics of the Cassandra data placement
+algorithm, and Section \ref{sec:problem} discusses situations that can degrade
+Cassandra service. Readers already familiar with Cassandra operations may wish
+to skip to \hyperref[sec:analysis]{Analysis} (Section \ref{sec:analysis}) or
+\hyperref[sec:solutions]{Solutions} (Section \ref{sec:solutions}).
 
 \section{Cassandra Background}
+\label{sec:background}
 Data in Cassandra is distributed across the cluster hosts according to a
 consistent hashing algorithm. All data has a partition key, which Cassandra
 hashes to yield an integer bounded within the hash space. Each host in the
@@ -144,9 +152,10 @@ unavailability is unacceptable to customers.
 \section{Analysis}
 \label{sec:analysis}
 We conduct our analysis on a cluster with replication factor 3 ($R=3$). Under
-$R=3$, the failure of two interdependent nodes leaves their shared token range(s) with only a  single active node. The remaining node can continue to serve reads
-and writes, but \emph{cannot} produce a quorum. We consider any lack of quorum,
-anywhere in the cluster, to be an outage.
+$R=3$, the failure of two nodes with a shared token range leaves their shared
+token range(s) with only a single active node. The remaining node can continue
+to serve reads and writes, but \emph{cannot} produce a quorum. We consider any
+lack of quorum, anywhere in the cluster, to be an outage.
 
 Without virtual nodes, a host in an $RF=3$ cluster would inter-depend on 4
 other hosts: its two left-neighbors and two right-neighbors. If the cluster
@@ -183,41 +192,55 @@ Cassandra streams data, we add an arbitrary fudge factor for this later).
 
 \subsection{Availability Model}
 
-Crucial to the availability calculation is how quickly nodes can recover. The
-longer a host takes to recover, the longer a second failure can occur and cause
-an outage. We model this in eq. \ref{recovery} as a variant of the Birthday
-Problem \cite{neighbors}. For each token, we choose a random $2 * (R - 1)$
-replica hosts, those that precede and those that follow the token on the
+Crucial to the availability calculation is how quickly nodes can recover:
+$E[T_{recovery}]$. The longer a host takes to recover, the longer a second failure
+can occur and cause an outage. We model this in eq. \ref{recovery} by taking
+the dataset $S$ and dividing it by the rate at which a recovering node can
+stream data from peers. To determine the speed, we must determine how many neighbors
+the node can stream from, which we model as a variant of the Birthday Problem
+\cite{neighbors}. For each token, we choose a random $2 * (R - 1)$ replica hosts
+(\ref{eq:recoveryb}), those that precede and those that follow the token on the
 Cassandra ring. This is a \textit{conservative} estimate of how many neighbors
 each additional token adds because actual Cassandra replication prohibits
 duplicates \cite{replication}. We then make the model even more conservative by
 assuming rack awareness, and that the number of racks equals $R$, which
-eliminates $\frac{n}{R}$ nodes from being possible replicas.
-
-This model presents a \textit{best case} for vnodes.
+eliminates $\frac{n}{R}$ nodes from being possible replicas (\ref{eq:recoveryc}).
+Finally we can determine the number of expected neighbors, $E[n_{neighbors}]$ by
+applying the formula for the number of distinct items expected from $k$ draws of
+$n_{p}$ items in \ref{eq:recoveryd}. To find the recovery time we assume that the
+node is being replaced with \texttt{replace\_address} rather than with
+\texttt{removenode}, so we only consider the incoming bandwidth of a single
+host (\ref{eq:recoverye}). This leads to \ref{eq:recoveryf} and concludes the
+recovery model.
 
 \begin{subequations} \label{recovery}
     \begin{align}
-        k & = v * (2 * (R - 1)) \\ \label{recoverya}
-        n_{p} & = n - \frac{n}{R} \\
-        E[n_{neighbors}] & = n_{p} * [1 - (1-\frac{1}{n_{p}})^k] \label{recoveryc} \\
-        speed & = \min(B_{inc}, E[n_{neighbors}] * B_{out}) \\
         E[T_{recovery}] & = \frac{S}{speed} \\
+        \label{eq:recoveryb}
+        k & = v * (2 * (R - 1)) \\
+        \label{eq:recoveryc}
+        n_{p} & = n - \frac{n}{R} \\
+        \label{eq:recoveryd}
+        E[n_{neighbors}] & = n_{p} * [1 - (1-\frac{1}{n_{p}})^k] \\
+        \label{eq:recoverye}
+        speed & = \min(B_{inc}, E[n_{neighbors}] * B_{out}) \\
+        \label{eq:recoveryf}
         E[T_{recovery}] & = \frac{S}{\min(B_{inc}, E[n_{neighbors}] * B_{out})}
     \end{align}
 \end{subequations}
 
 This is a very conservative model, but for cloud environments like AWS where
 Cassandra racks generally map 1:1 with availability zones this kind of
-conservative model is reasonably accurate. The rest of Eq. \ref{recovery} follows
-from dividing the per node dataset size by the maximum effective bandwidth to
-a recovering node. This gives us what we dub the ``critical window''
-where any neighbor failing will cause a token range to lose quorum.
+conservative model is reasonably accurate. This model gives us what we dub the
+``critical window'' where any neighbor failing will cause a token range to lose
+quorum.
 
 From Eq. \ref{recovery} we can see that as $v$ increases, we get faster
 streaming until we reach diminishing returns because we have saturated the
 inbound network of the joining node. At that point additional streams do not
-help speed recovery.
+help speed recovery. See Section \ref{sec:replacing} for a discussion of why
+we think this replacement model is more appropriate for production than
+alternatives.
 
 Now that we can model the expected recovery time, we begin the failure model by
 assuming that hosts fail as independent Poisson processes with parameter
@@ -258,6 +281,9 @@ which models the average number of outages over an interval $\tau$.
 \begin{split}
     E[outages] & = \lambda_{global} \\
     & = (n * \lambda_{split}) \\
+% * <joe.e.lynch@gmail.com> 2018-03-27T01:54:12.126Z:
+%
+% ^.
     & = (n * (\lambda * P(outage|failure))) \\
     & = (n * (\lambda * (1 - e^{-E[T_{recovery}] * E[n_{neighbors}] * \lambda_{s}})))
 \end{split}
@@ -265,8 +291,8 @@ which models the average number of outages over an interval $\tau$.
 
 From this model we can see that availability is compromised by increasing the
 number of nodes ($n$), increasing the failure rate of those nodes ($\lambda$),
-increasing the number of tokens per node ($v$), or decreasing the streaming
-bandwidth. To see how badly availability reacts with plausible default settings
+increasing the number of tokens per node ($v$), or decreasing the recovery
+speed. To see how badly availability reacts with plausible default settings
 on a 96 node cluster in a cloud environment with machine failure rate
 $\lambda=\frac{25}{century}=\frac{0.25}{year}$.
 
@@ -277,7 +303,7 @@ $\lambda=\frac{25}{century}=\frac{0.25}{year}$.
  R       &  3 \\
  S       &  307,200 (MB, 300 gigabyte) \\
  B_{inc} &  125 (MB/s, 1 gigabit) \\
- B_{out} &  25 (MB/s, 200 megabit) \\
+ B_{out} &  25 / 2 = 12 (MB/s, 100 megabit) \\
 \end{conditions}
 
 We model this over a century because the probabilities of outage are so low in a
@@ -425,56 +451,143 @@ reach the size of the cluster at which point we reach diminishing returns.
     \label{fig:scaling}
 \end{figure}
 
+\subsection{Solutions to the Availability Problem}
+\label{sec:solutions}
+There are a number of solutions to the availability problem caused by
+vnodes with various tradeoffs. We briefly discuss some here:
+
+\subsubsection{Solution 1: Change the Number of vnodes}
+A simple solution to the availability problem is to make the tradeoff
+less drastic. Moving to 4-16 tokens per node achieves almost all of the
+benefits of vnodes, while trading off significantly less availability.
+For example a setting of 16 gives 10x better availability than 256 while
+still having 10x easier scaling than a single token.
+
+\subsubsection{Solution 2: Decouple Data Transfer from Recovery}
+An elegant solution to this problem is to use networked attached storage
+such as EBS \cite{ebs}. With a high reliability, low latency, network
+block device like AWS \texttt{gp2} EBS, Eq. \ref{recovery} becomes a
+fixed constant of roughly five minutes (the time it takes to attach an
+orphaned EBS volume). This increases availability by multiple orders of
+magnitude as replacement no longer varies with the size of the cluster.
+Figure \ref{fig:ebs} shows just how much availability clusters with or
+without vnodes can get by using EBS to store their data. The gains are
+even higher for large datasets (this model only has 300GB, if it were
+2TB the gains would be significantly higher).
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=1.0\textwidth]{images/recovery_strategy.png}
+    \caption{Availability Under Differing Recovery Strategies}
+    \label{fig:ebs}
+\end{figure}
+
+\subsubsection{Solution 3: Replacing Hardware via \texttt{removenode}}
+\label{sec:replacing}
+There is an alternative streaming model where instead of replacing a
+failed node with \texttt{replace\_address}, the operator runs
+\texttt{removenode}, to get the cluster to recovery back to healthy
+quickly, but simply with one fewer node present \cite{removenode}.
+The subsequent bootstrap may take a long time, but that time is not
+spent at risk of outage. This technique is strictly dominated by
+\texttt{replace\_node} for single token cluster because the data must
+be streamed twice, but for vnodes it can make the availability much
+higher because \texttt{removenode} theoretically involves almost every
+node in the cluster transferring data between themselves, and therefore
+finishing very quickly.
+
+This approach is likely unwise in production, however, as unlike
+\texttt{replace\_address}, \texttt{removenode} causes operational load
+on nodes that are simultaneously doing latency sensitive query workloads.
+In particular \texttt{removenode} causes the following unique impacts to
+hosts taking latency sensitive reads:
+\begin{enumerate}
+\item{Inbound network traffic}
+\item{Disk IO and CPU cycles to write the data to disk (and later clean
+it up)}
+\item{Loss of OS disk cache for data that will be invalidated shortly}
+\end{enumerate}
+
+Inbound network traffic is particularly problematic because unlike
+\textit{outbound} network traffic which can be effectively be controlled
+via QoS \cite{qos}, \textit{inbound} network traffic is very difficult
+to insulate query traffic from, and would likely cause operational impact.
+In contrast, with \texttt{replace\_address} the cluster operator can use
+\texttt{tc-fq} to insulate query traffic from the streaming flows
+\cite{tc-fq}
+
+This may also be slightly FUD, but because the cluster has a higher
+number of token range movements happening for longer, there is a higher
+risk of ending up with simultaneous range movements of the same token
+which could violate consistency.
+
 \section{Conclusion}
 
 We have shown using a reasonable model that using a number of tokens per node
 greater than the number of physical nodes in the cluster significantly increases
 the expected outages, with default settings causing orders of magnitude more
 frequent outages. This availability is traded away for more even distribution
-of data and the ability to add fewer nodes and still maintain even distribution.
-We believe, however, that a reasonable middle ground exists in the
-\textbf{4-16 vnode range} where the streaming benefits mostly counteract the
-additional risky neighbors and therefore the overall probability of outage is
-still quite low. Concretely, changing the default tokens per node in
+of data and the ability to add or remove fewer nodes and still maintain even
+distribution. We have proposed a number of possible solutions, and we
+believe the best option is a significantly smaller number of tokens per node
+by default, for example changing the default tokens per node in
 \texttt{cassandra.yaml} from 256 to 16 would yield \textbf{10x higher availability}
 than 256 and still have \textbf{10x better scalability} than single token clusters.
+Regardless of how the Cassandra community chooses to solve this problem, it is
+worth understanding how vnodes have changed the math.
 
 \begin{thebibliography}{9}
 
 \bibitem{vnodes}
 Brandon Williams: Virtual nodes in Cassandra 1.2
-\\\texttt{https://www.datastax.com/dev/blog/virtual-nodes-in-cassandra-1-2}
+\path{https://www.datastax.com/dev/blog/virtual-nodes-in-cassandra-1-2}
 
 \bibitem{karger}
 Karger, et. al. Consistent Hashing and Random Trees: Distributed Caching Protocols for Relieving Hot Spots on the World Wide Web
-\\\texttt{https://dl.acm.org/citation.cfm?id=258660}
+\path{https://dl.acm.org/citation.cfm?id=258660}
 
 \bibitem{dataloss}
 Martin Kleppmann: The probability of data loss in large clusters
-\\\texttt{https://martin.kleppmann.com/2017/01/26/data-loss-in-large-clusters.html}
+\path{https://martin.kleppmann.com/2017/01/26/data-loss-in-large-clusters.html}
 
 \bibitem{replication}
 Cassandra Data replication, \texttt{NetworkAwareTopologyStrategy}
-\texttt{https://docs.datastax.com/en/cassandra/latest/cassandra/architecture/archDataDistributeReplication.html}
+\path{https://docs.datastax.com/en/cassandra/latest/cassandra/architecture/archDataDistributeReplication.html}
 
 \bibitem{neighbors}
 Kyle Siegrist: The Birthday Problem
-\\\texttt{http://www.randomservices.org/random/urn/Birthday.html}
+\path{http://www.randomservices.org/random/urn/Birthday.html}
+
+\bibitem{replacenode}
+Apache Software Foundation: Replacing a Dead Node
+\path{http://cassandra.apache.org/doc/latest/tools/nodetool/removenode.html}
+
+\bibitem{removenode}
+Apache Software Foundation: nodetool removenode
+\path{http://cassandra.apache.org/doc/latest/tools/nodetool/removenode.html}
 
 \bibitem{tokenallocation}
 Branimir Lambov: New token allocation algorithm in Cassandra 3.0
-\\\texttt{https://www.datastax.com/dev/blog/token-allocation-algorithm}
+\path{https://www.datastax.com/dev/blog/token-allocation-algorithm}
 
+\bibitem{ebs}
+Jim Plush and Dennis Opacki: Amazon EBS \& Cassandra
+\path{https://www.youtube.com/watch?v=1R-mgOcOSd4}
 
+\bibitem{qos}
+Bert Hubert et al.: Linux Advanced Routing \& Traffic Control
+\path{http://lartc.org/lartc.html#LARTC.QDISC}
+
+\bibitem{tc-fq}
+Eric Dumazet: Fair Queue packet scheduler
+\path{https://lwn.net/Articles/565421/}
 
 \end{thebibliography}
-
 
 \section{Appendix}
 
 Source code for all graphs is available on \href{https://github.com/jolynch/python_performance_toolkit/blob/master/notebooks/cassandra_availability/cassandra_availability.ipynb}{github} as well as reproduced below.
 \begin{lstlisting}[language=Python]
-
 
 # coding: utf-8
 
@@ -518,8 +631,11 @@ def p_outage_given_failure(recovery_seconds, num_neighbors, rate_in_seconds):
 def global_rate(node_rate, nodes, split_probability):
     return node_rate * nodes * split_probability
 
-def recovery_seconds(size, bw_in, bw_out, neighbors):
+def recovery_seconds(size, bw_in, bw_out, neighbors, recovery='streaming'):
+    if recovery == 'ebs':
+        return 60 * 5
     return int(size / (min(bw_in, neighbors * bw_out)))
+
 
 # Default model
 nodes = 96
@@ -555,9 +671,12 @@ arecovery = recovery_seconds(node_dataset_mb, bw_in, bw_out, aneighbors)
 print("Neighbors for {0} vnodes: {1:.3f}".format(vnodes, aneighbors))
 
 
-def outage_stats(vnodes, failure_rate_per_century, num_nodes, rf, bw_in, bw_out, strategy='rack'):
+def outage_stats(
+        vnodes, failure_rate_per_century, num_nodes,
+        rf, bw_in, bw_out,
+        strategy='rack', recovery='streaming'):
     neighbors = num_neighbors(num_nodes, vnodes, rf, strategy)
-    recovery_s = recovery_seconds(node_dataset_mb, bw_in, bw_out, neighbors)
+    recovery_s = recovery_seconds(node_dataset_mb, bw_in, bw_out, neighbors, recovery)
     p_failure = p_outage_given_failure(
         recovery_s, neighbors, failure_rate_per_century / century_seconds)
 
@@ -568,7 +687,10 @@ def outage_stats(vnodes, failure_rate_per_century, num_nodes, rf, bw_in, bw_out,
     )
 
 # Returns outages _per century_
-def compute_outage(vnodes, failure_rate_per_century, num_nodes, rf, bw_in, bw_out, strategy='rack'):
+def compute_outage(
+        vnodes, failure_rate_per_century, num_nodes,
+        rf, bw_in, bw_out,
+        strategy='rack', recovery='streaming'):
     return outage_stats(
         vnodes, failure_rate_per_century, num_nodes, rf, bw_in, bw_out, strategy
     )[0]
@@ -653,10 +775,13 @@ plt.gca().yaxis.set_minor_locator(matplotlib.ticker.AutoMinorLocator(4))
 plt.gca().xaxis.set_minor_locator(matplotlib.ticker.AutoMinorLocator(5))
 plt.tick_params(axis='both', which='major', labelsize=14, length=6)
 plt.tick_params(axis='both', which='minor', length=0)
+colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+plt.gca().set_prop_cycle('color', colors[0:1] + colors[2:])
 
-num_vnodes = (1, 4, 16, 256)
+num_vnodes = (1, 16, 256)
 num_nodes = range(3, 300)
 lines = []
+
 for v in num_vnodes:
     outages = [outage_stats(v, arate, n, rf, bw_in, bw_out) for n in num_nodes]
     outage_mean = [o[3] for o in outages]
@@ -676,6 +801,10 @@ iqr_patch = mpatches.Patch(color='gray', label='IQR')
 plt.legend(
     handles=lines + [iqr_patch], loc='upper right', fontsize=16
 )
+
+
+# In[4]:
+
 
 # Hold failures constant, vary size of cluster
 plt.figure(figsize=(15,10))
@@ -739,7 +868,7 @@ plt.xlim(3, 50)
 plt.legend(fontsize=16)
 
 
-# In[4]:
+# In[5]:
 
 # Hold failures constant, vary size of cluster
 plt.figure(figsize=(15,10))
@@ -766,7 +895,7 @@ plt.xlim(3, 50)
 plt.legend(fontsize=16)
 
 
-# In[5]:
+# In[6]:
 
 # Observe impact of vnodes on Scale Up Balancing
 plt.figure(figsize=(15,10))
@@ -791,7 +920,53 @@ plt.xlim(3, 256)
 plt.legend(fontsize=16)
 
 
-# In[6]:
+# In[9]:
+
+# Observe impact of EBS on availability
+plt.figure(figsize=(15,10))
+plt.title(
+    "Cassandra Recovery Strategy, {0} failures / Century".format(arate), fontsize=20)
+plt.ylabel("Expected Centuries Between Outages", fontsize=16)
+plt.xlabel("Number of Nodes in the Cluster", fontsize=16)
+plt.gca().grid(True, which='major', linestyle='-', color='k')
+plt.gca().grid(True, which='minor', linestyle='--')
+plt.gca().yaxis.set_minor_locator(matplotlib.ticker.AutoMinorLocator(4))
+plt.gca().xaxis.set_minor_locator(matplotlib.ticker.AutoMinorLocator(5))
+plt.tick_params(axis='both', which='major', labelsize=14, length=6)
+plt.tick_params(axis='both', which='minor', length=0)
+
+num_nodes = range(3, 300)
+lines = []
+
+# Plot fixed recovery speed
+outages = [outage_stats(1, arate, n, rf, bw_in, bw_out, recovery='ebs') for n in num_nodes]
+outage_mean = [o[3] for o in outages]
+outage_lower = [o[4][0] for o in outages]
+outage_upper = [o[4][1] for o in outages]
+line, = plt.semilogy(num_nodes, outage_mean, label="EBS,vnode=any")
+lines.append(line)
+plt.fill_between(
+    num_nodes, outage_lower, outage_upper, alpha=0.1,
+    label='EBS,vnode=any IQR'.format(v)
+)
+
+outages = [outage_stats(1, arate, n, rf, bw_in, bw_out, recovery='recovery') for n in num_nodes]
+outage_mean = [o[3] for o in outages]
+outage_lower = [o[4][0] for o in outages]
+outage_upper = [o[4][1] for o in outages]
+line, = plt.semilogy(num_nodes, outage_mean, label="streaming,vnode=1")
+lines.append(line)
+plt.fill_between(
+    num_nodes, outage_lower, outage_upper, alpha=0.1,
+    label='streaming,vnode=1 IQR'
+)
+
+plt.xlim(3, 300)
+
+plt.legend(fontsize=16)
+
+
+# In[8]:
 
 import itertools
 import random
