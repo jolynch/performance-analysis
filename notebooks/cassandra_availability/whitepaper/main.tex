@@ -71,14 +71,14 @@
 
 \maketitle
 \section{Introduction}
-When Cassandra introduced vnodes in version 1.2, the database made new tradeoffs
+When Cassandra introduced vnodes in version 1.2, the database made new trade-offs
 with respect to cluster maintainability and availability \cite{vnodes}. In particular,
 large Cassandra clusters became easier to scale and operate, but they lost
 availability when replacing nodes.
 
 The two main benefits of vnodes are that the variance in data size held by any
 one host decreases, and that operators can more easily change the number of
-hosts participating in a cluster. In return, vnodes trade off availability during
+hosts participating in a cluster. In return, vnodes trade-off availability during
 node failures. As we document in this report, the availability cost of vnodes is
 both quantifiable and unavoidable. We present a model of the availability of a
 single-datacenter Cassandra cluster under failures. We attempt furthermore
@@ -89,9 +89,9 @@ Based on our model, we conclude that the Cassandra default of 256 virtual nodes
 per physical host is unwise, as it results in steadily rising chance of
 unavailability as cluster size grows. This increasing failure rate is
 antithetical to Cassandra's design goal of fault-tolerance. We further use
-the model to argue for a middle ground of 4-16 virtual nodes which both achieves
+the model to argue for a number of possible solutions which both achieve
 operability goals of vnodes while at the same time providing much higher
-fault-tolerance, especially for large clusters.
+fault-tolerance, especially for large clusters (hundreds of nodes).
 
 Section \ref{sec:background} introduces basics of the Cassandra data placement
 algorithm, and Section \ref{sec:problem} discusses situations that can degrade
@@ -120,24 +120,24 @@ Hosts in a Cassandra cluster are assigned one or more tokens which represent
 positions in a hash space created by the hashing function. Having more than
 one token per physical host leads to ``virtual'' nodes. The start of each
 range is variable, depending on the location of tokens held by other nodes
-in the cluster. The space in the hash space between tokens are known as
+ in the cluster. The intervals in the hash space between tokens are known as
 \textit{token ranges} and are the basis of all data replication. Depending on
 the keyspace replication strategy, and the placement of the ``virtual'' nodes,
 different physical hosts will be chosen to store data in a token range.
-For example, to achieve a replication factor of two using a
-\texttt{SimpleStrategy} Cassandra assigns two different physical hosts to
-each token range, while with the \texttt{NetworkTopologyStrategy} Cassandra
-assures that data is replicated to physical hosts across datacenters and
-spread across racks as well. In all replication strategies, however, virtual
-nodes add additional neighbors to physical hosts.
+For example, to achieve a replication factor of two using
+\texttt{SimpleStrategy}, Cassandra assigns two different physical hosts to
+each token range, while with \texttt{NetworkTopologyStrategy} Cassandra adds
+additional constraints to assure that data is replicated between racks and
+across datacenters.
 
 \section{Problem}
 \label{sec:problem}
 
-In Cassandra's data placement strategy, availability is only compromised under
-a single host failure if at least one additional physical host that owns an
-intersecting range fails before the first host's data can be recovered. Prior
-attempts have been made to model Cassandra's failure modes \cite{dataloss},
+In Cassandra's data placement strategy with a replication factor of three,
+availability is compromised when at least two hosts holding intersecting token
+ranges become unavailable to serve traffic. Practically speaking, unavailability
+results when a second node fails so quickly that the first hasn't had time to recover.
+Prior attempts have been made to model Cassandra's failure modes \cite{dataloss},
 but they often do not take into account the recovery aspect of Cassandra where
 it automatically \footnote{Not exactly automatically, but with the right
 \href{https://github.com/Netflix/Priam}{automation} it can be automatic}
@@ -145,25 +145,25 @@ streams lost data to new hosts. We approach the problem from a different
 direction, opting instead to model outages as a combination of losing a single
 node plus losing a neighboring node that owns an intersecting token range
 before recovery finishes, causing \texttt{UnavailableExceptions} to clients
-operating at \texttt{QUORUM} consistency levels. We do not care about the
-proportion of the ring that is unavailable or for how long as any
-unavailability is unacceptable to customers.
+operating at \texttt{QUORUM} consistency levels. We consider any unavailability of
+the ring to be unacceptable to customers, whether it is of a large portion of the
+ring or small.
 
 \section{Analysis}
 \label{sec:analysis}
+
 We conduct our analysis on a cluster with replication factor 3 ($R=3$). Under
 $R=3$, the failure of two nodes with a shared token range leaves their shared
 token range(s) with only a single active node. The remaining node can continue
-to serve reads and writes, but \emph{cannot} produce a quorum. We consider any
-lack of quorum, anywhere in the cluster, to be an outage.
+to serve reads and writes, but \emph{cannot} produce a quorum.
 
 Without virtual nodes, a host in an $RF=3$ cluster would inter-depend on 4
 other hosts: its two left-neighbors and two right-neighbors. If the cluster
 is small enough, the same node may serve as both a left-neighbor and a
 right-neighbor. For example on a cluster with three hosts, each node
-inter-depends with two others, with four hosts each node has three
-inter-dependents, and with five or more hosts each node has four
-inter-dependents. When a host places 256 virtual nodes into the ring, each
+inter-depends with two others; with four hosts each node has three
+inter-dependents; and with five or more hosts each node has four
+inter-dependents. When a brand new host places 256 virtual nodes into the ring, each
 vnode it places inter-depends with 2-4 other nodes.
 
 By adding multiple token ranges to the responsibility of a single server,
@@ -171,7 +171,10 @@ virtual nodes increase inter-dependency and decrease availability by
 coupling physical hosts together. Conversely, they theoretically increase the
 speed at which nodes can recover data by streaming\footnote{In our experience,
 at least with Cassandra 2.x and 3.0.x, inbound streaming tops out at significantly
-under line rate, but this simply makes this model conservative}.
+under network hardware capacity, but this simply makes this model underestimate outages}.
+
+Whenever it was necessary to build assumptions into the model, we chose them to make
+the model underestimate outages.
 
 For the purposes of this analysis:
 
@@ -184,34 +187,39 @@ For the purposes of this analysis:
  B_{inc} &  maximum incoming bandwidth of a joining physical host (MB/s) \\
  B_{out} &  maximum outgoing bandwidth of a stream (MB/s) \\
 \end{conditions}
+
 $n$ and $S$ are details of a particular Cassandra deployment, $v$ and $B_{out}$
 are configuration options in \texttt{cassandra.yaml}, $R$ is determined by the
 keyspace replication strategy and $\lambda$ and $B_{inc}$ are determined by the
 hardware Cassandra is deployed to ($B_{inc}$ is also impacted by how efficiently
-Cassandra streams data, we add an arbitrary fudge factor for this later).
+Cassandra streams data, which we take into account with an arbitrary adjustment
+in the model).
 
 \subsection{Availability Model}
 
-Crucial to the availability calculation is how quickly nodes can recover:
+Crucial to the availability calculation is how quickly nodes recover:
 $E[T_{recovery}]$. The longer a host takes to recover, the longer a second failure
-can occur and cause an outage. We model this in eq. \ref{recovery} by taking
+can occur and cause an outage.
+
+We model this in eq. \ref{recovery} by taking
 the dataset $S$ and dividing it by the rate at which a recovering node can
 stream data from peers. To determine the speed, we must determine how many neighbors
 the node can stream from, which we model as a variant of the Birthday Problem
 \cite{neighbors}. For each token, we choose a random $2 * (R - 1)$ replica hosts
 (\ref{eq:recoveryb}), those that precede and those that follow the token on the
-Cassandra ring. This is a \textit{conservative} estimate of how many neighbors
+Cassandra ring. This is an underestimate of how many neighbors
 each additional token adds because actual Cassandra replication prohibits
-duplicates \cite{replication}. We then make the model even more conservative by
-assuming rack awareness, and that the number of racks equals $R$, which
+duplicates \cite{replication}. We then make the model underestimate outages
+further by assuming rack awareness, and that the number of racks equals $R$, which
 eliminates $\frac{n}{R}$ nodes from being possible replicas (\ref{eq:recoveryc}).
 Finally we can determine the number of expected neighbors, $E[n_{neighbors}]$ by
 applying the formula for the number of distinct items expected from $k$ draws of
-$n_{p}$ items in \ref{eq:recoveryd}. To find the recovery time we assume that the
-node is being replaced with \texttt{replace\_address} rather than with
-\texttt{removenode}, so we only consider the incoming bandwidth of a single
-host (\ref{eq:recoverye}). This leads to \ref{eq:recoveryf} and concludes the
-recovery model.
+$n_{p}$ items in \ref{eq:recoveryd}. To find the final recovery time we assume that
+the node is being replaced with \texttt{replace\_address} rather than with
+\texttt{removenode} \footnote{See Section \ref{sec:replacing} for a discussion of why
+we think this replacement model is more appropriate for production}, so we only
+consider the incoming bandwidth of a single host (\ref{eq:recoverye}).
+This leads to \ref{eq:recoveryf} and concludes the recovery model.
 
 \begin{subequations} \label{recovery}
     \begin{align}
@@ -229,18 +237,18 @@ recovery model.
     \end{align}
 \end{subequations}
 
-This is a very conservative model, but for cloud environments like AWS where
+This is a very conservative model, meaning that in reality vnodes would likely
+have a higher impact (e.g. because more nodes can be neighbors and you can't
+actually stream at line rate), but for cloud environments like AWS where
 Cassandra racks generally map 1:1 with availability zones this kind of
-conservative model is reasonably accurate. This model gives us what we dub the
+model is reasonably accurate. This model gives us what we dub the
 ``critical window'' where any neighbor failing will cause a token range to lose
 quorum.
 
 From Eq. \ref{recovery} we can see that as $v$ increases, we get faster
 streaming until we reach diminishing returns because we have saturated the
 inbound network of the joining node. At that point additional streams do not
-help speed recovery. See Section \ref{sec:replacing} for a discussion of why
-we think this replacement model is more appropriate for production than
-alternatives.
+help speed recovery.
 
 Now that we can model the expected recovery time, we begin the failure model by
 assuming that hosts fail as independent Poisson processes with parameter
@@ -369,7 +377,7 @@ else constant, they become \textit{less available}. This intuitively makes
 sense because as you increase the number of hosts significantly past RF,
 you are creating more replicas that can fail and be vulnerable to a second
 failure. Virtual nodes \textit{significantly exacerbate} the problems for
-large clusters ($n > 100$) causing substantially more outages at large cluster
+large clusters ($n > 200$) causing substantially more outages at large cluster
 sizes. This is shown in figure Fig. \ref{fig:outages_nodes_mtbf} and
 Fig. \ref{fig:outages_nodes} . Fig \ref{fig:outages_nodes_mtbf} is
 particularly interesting because we can see with 256 vnodes, we rapidly
@@ -454,10 +462,10 @@ reach the size of the cluster at which point we reach diminishing returns.
 \subsection{Solutions to the Availability Problem}
 \label{sec:solutions}
 There are a number of solutions to the availability problem caused by
-vnodes with various tradeoffs. We briefly discuss some here:
+vnodes with various trade-offs. We briefly discuss some here:
 
 \subsubsection{Solution 1: Change the Number of vnodes}
-A simple solution to the availability problem is to make the tradeoff
+A simple solution to the availability problem is to make the trade-off
 less drastic. Moving to 4-16 tokens per node achieves almost all of the
 benefits of vnodes, while trading off significantly less availability.
 For example a setting of 16 gives 10x better availability than 256 while
@@ -486,21 +494,22 @@ even higher for large datasets (this model only has 300GB, if it were
 \label{sec:replacing}
 There is an alternative streaming model where instead of replacing a
 failed node with \texttt{replace\_address}, the operator runs
-\texttt{removenode}, to get the cluster to recovery back to healthy
-quickly, but simply with one fewer node present \cite{removenode}.
-The subsequent bootstrap may take a long time, but that time is not
-spent at risk of outage. This technique is strictly dominated by
-\texttt{replace\_node} for single token cluster because the data must
-be streamed twice, but for vnodes it can make the availability much
-higher because \texttt{removenode} theoretically involves almost every
-node in the cluster transferring data between themselves, and therefore
-finishing very quickly.
+\texttt{removenode} on the dead node. This recovers the cluster to
+full replication rapidly as all nodes are participating in the
+re-replication of data, but simply with one fewer node present
+\cite{removenode}. The subsequent bootstrap may take a long time,
+but that time is not spent at risk of outage. This technique is strictly
+dominated by \texttt{replace\_node} for single token clusters because
+the data must be streamed twice, but for multiple token per node clusters
+it can make the availability much higher because \texttt{removenode}
+theoretically involves almost every node in the cluster transferring
+data between themselves, and therefore finishing very quickly.
 
 This approach is likely unwise in production, however, as unlike
 \texttt{replace\_address}, \texttt{removenode} causes operational load
 on nodes that are simultaneously doing latency sensitive query workloads.
-In particular \texttt{removenode} causes the following unique impacts to
-hosts taking latency sensitive reads:
+In particular \texttt{removenode} causes the following unique impacts
+(versus \texttt{replace\_node}) to hosts taking latency sensitive queries:
 \begin{enumerate}
 \item{Inbound network traffic}
 \item{Disk IO and CPU cycles to write the data to disk (and later clean
@@ -516,10 +525,19 @@ In contrast, with \texttt{replace\_address} the cluster operator can use
 \texttt{tc-fq} to insulate query traffic from the streaming flows
 \cite{tc-fq}
 
-This may also be slightly FUD, but because the cluster has a higher
-number of token range movements happening for longer, there is a higher
-risk of ending up with simultaneous range movements of the same token
-which could violate consistency.
+This approach would require significant production vetting before we
+believe it is a viable alternative to the production hardened
+\texttt{replace\_node} approach.
+
+\subsubsection{Solution 4: Stop Using vnodes Entirely}
+An alternative way to solve the operational pain of large Cassandra clusters,
+while maintaining availability, is to use \texttt{moves} rather than
+tokens to re-balance data in a cluster \cite{moves}. This could either happen
+through a central planner which determines the optimal state of the cluster,
+or some kind of distributed greedy algorithm. Now that Cassandra
+has good streaming via the Netty refactor, this appears to be a very
+plausible approach and has additional benefits in repair
+and scaling (simultaneous bootstrap).
 
 \section{Conclusion}
 
@@ -528,12 +546,11 @@ greater than the number of physical nodes in the cluster significantly increases
 the expected outages, with default settings causing orders of magnitude more
 frequent outages. This availability is traded away for more even distribution
 of data and the ability to add or remove fewer nodes and still maintain even
-distribution. We have proposed a number of possible solutions, and we
-believe the best option is a significantly smaller number of tokens per node
-by default, for example changing the default tokens per node in
-\texttt{cassandra.yaml} from 256 to 16 would yield \textbf{10x higher availability}
-than 256 and still have \textbf{10x better scalability} than single token clusters.
-Regardless of how the Cassandra community chooses to solve this problem, it is
+distribution. We have proposed a number of possible solutions, but we believe
+the current \texttt{cassandra.yaml} setting of 256 tokens per node has
+significantly decreased Cassandra cluster availability, especially at large
+cluster sizes, and are interested in improving the situation. Regardless of
+how the Cassandra community chooses to solve this problem, we believe it is
 worth understanding how vnodes have changed the math.
 
 \begin{thebibliography}{9}
@@ -581,6 +598,10 @@ Bert Hubert et al.: Linux Advanced Routing \& Traffic Control
 \bibitem{tc-fq}
 Eric Dumazet: Fair Queue packet scheduler
 \path{https://lwn.net/Articles/565421/}
+
+\bibitem{moves}
+Apache Software Foundation: nodetool move
+\path{http://cassandra.apache.org/doc/latest/operating/topo_changes.html#moving-nodes}
 
 \end{thebibliography}
 
