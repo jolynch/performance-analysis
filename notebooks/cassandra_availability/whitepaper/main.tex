@@ -53,10 +53,7 @@
   {\end{tabular}\\[\belowdisplayskip]}
 
 
-\title{DRAFT: Cassandra Availability with Virtual Nodes}
-% * <joe.e.lynch@gmail.com> 2018-03-22T18:33:37.587Z:
-%
-% ^.
+\title{Cassandra Availability with Virtual Nodes}
 \author{
   Joseph Lynch\\
   \texttt{joe.e.lynch@gmail.com}\\
@@ -72,9 +69,9 @@
 \maketitle
 \section{Introduction}
 When Cassandra introduced vnodes in version 1.2, the database made new trade-offs
-with respect to cluster maintainability and availability \cite{vnodes}. In particular,
-large Cassandra clusters became easier to scale and operate, but they lost
-availability when replacing nodes.
+with respect to cluster maintainability and availability \cite{vnodes}
+\cite{vnodesemail}. In particular, large Cassandra clusters became easier to scale
+and operate, but they lost availability during temporary or permanent node failures.
 
 The two main benefits of vnodes are that the variance in data size held by any
 one host decreases, and that operators can more easily change the number of
@@ -139,15 +136,15 @@ ranges become unavailable to serve traffic. Practically speaking, unavailability
 results when a second node fails so quickly that the first hasn't had time to recover.
 Prior attempts have been made to model Cassandra's failure modes \cite{dataloss},
 but they often do not take into account the recovery aspect of Cassandra where
-it automatically \footnote{Not exactly automatically, but with the right
-\href{https://github.com/Netflix/Priam}{automation} it can be automatic}
-streams lost data to new hosts. We approach the problem from a different
-direction, opting instead to model outages as a combination of losing a single
-node plus losing a neighboring node that owns an intersecting token range
-before recovery finishes, causing \texttt{UnavailableExceptions} to clients
-operating at \texttt{QUORUM} consistency levels. We consider any unavailability of
-the ring to be unacceptable to customers, whether it is of a large portion of the
-ring or small.
+it automatically restarts after process failure or in the case of permanent failure
+streams lost data to new hosts \footnote{Not exactly automatically, but with the right
+\href{https://github.com/Netflix/Priam}{automation} it can be automatic}.
+We approach the problem from a different direction, opting instead to model
+outages as a combination of losing a single node plus losing a neighboring node
+that owns an intersecting token range before recovery finishes, causing
+\texttt{UnavailableExceptions} to clients operating at \texttt{QUORUM} consistency
+levels. We consider any unavailability of the ring to be unacceptable to customers,
+whether it is of a large portion of the ring or small.
 
 \section{Analysis}
 \label{sec:analysis}
@@ -201,7 +198,7 @@ Crucial to the availability calculation is how quickly nodes recover:
 $E[T_{recovery}]$. The longer a host takes to recover, the longer a second failure
 can occur and cause an outage.
 
-We model this in eq. \ref{recovery} by taking
+We model the recovery time of a host failure in Eq. \ref{recovery} by taking
 the dataset $S$ and dividing it by the rate at which a recovering node can
 stream data from peers. To determine the speed, we must determine how many neighbors
 the node can stream from, which we model as a variant of the Birthday Problem
@@ -238,12 +235,11 @@ This leads to \ref{eq:recoveryf} and concludes the recovery model.
 \end{subequations}
 
 This is a very conservative model, meaning that in reality vnodes would likely
-have a higher impact (e.g. because more nodes can be neighbors and you can't
-actually stream at line rate), but for cloud environments like AWS where
-Cassandra racks generally map 1:1 with availability zones this kind of
-model is reasonably accurate. This model gives us what we dub the
-``critical window'' where any neighbor failing will cause a token range to lose
-quorum.
+have a higher impact (e.g. because more nodes can be neighbors and may not
+have racks=$R$), but for cloud environments like AWS where Cassandra racks
+generally map 1:1 with availability zones this kind of model is reasonably
+accurate. This model gives us what we dub the ``critical window'' where any
+neighbor failing will cause a token range to lose quorum.
 
 From Eq. \ref{recovery} we can see that as $v$ increases, we get faster
 streaming until we reach diminishing returns because we have saturated the
@@ -289,9 +285,6 @@ which models the average number of outages over an interval $\tau$.
 \begin{split}
     E[outages] & = \lambda_{global} \\
     & = (n * \lambda_{split}) \\
-% * <joe.e.lynch@gmail.com> 2018-03-27T01:54:12.126Z:
-%
-% ^.
     & = (n * (\lambda * P(outage|failure))) \\
     & = (n * (\lambda * (1 - e^{-E[T_{recovery}] * E[n_{neighbors}] * \lambda_{s}})))
 \end{split}
@@ -299,7 +292,7 @@ which models the average number of outages over an interval $\tau$.
 
 From this model we can see that availability is compromised by increasing the
 number of nodes ($n$), increasing the failure rate of those nodes ($\lambda$),
-increasing the number of tokens per node ($v$), or decreasing the recovery
+increasing the number of neighbors (via $v$), or decreasing the recovery
 speed. To see how badly availability reacts with plausible default settings
 on a 96 node cluster in a cloud environment with machine failure rate
 $\lambda=\frac{25}{century}=\frac{0.25}{year}$.
@@ -469,19 +462,19 @@ A simple solution to the availability problem is to make the trade-off
 less drastic. Moving to 4-16 tokens per node achieves almost all of the
 benefits of vnodes, while trading off significantly less availability.
 For example a setting of 16 gives 10x better availability than 256 while
-still having 10x easier scaling than a single token.
+still having 10x easier scaling than a single token \cite{novnodes}.
 
 \subsubsection{Solution 2: Decouple Data Transfer from Recovery}
 An elegant solution to this problem is to use networked attached storage
 such as EBS \cite{ebs}. With a high reliability, low latency, network
-block device like AWS \texttt{gp2} EBS, Eq. \ref{recovery} becomes a
-fixed constant of roughly five minutes (the time it takes to attach an
-orphaned EBS volume). This increases availability by multiple orders of
-magnitude as replacement no longer varies with the size of the cluster.
-Figure \ref{fig:ebs} shows just how much availability clusters with or
-without vnodes can get by using EBS to store their data. The gains are
-even higher for large datasets (this model only has 300GB, if it were
-2TB the gains would be significantly higher).
+block device like AWS EBS \texttt{gp2}, Eq. \ref{recovery} becomes a
+fixed constant of roughly five minutes. This increases availability by
+multiple orders of magnitude as replacement no longer varies with data size.
+Multiple tokens per host still reduce availability (since neighbors
+is still higher), but it is much less significant. Figure \ref{fig:ebs}
+shows just how much availability clusters can get by using EBS to store
+their data. The gains are even higher for large datasets (this model
+only has 300GB, if it were 2TB the gains would be significantly higher).
 
 \begin{figure}[h!]
     \centering
@@ -503,7 +496,8 @@ dominated by \texttt{replace\_node} for single token clusters because
 the data must be streamed twice, but for multiple token per node clusters
 it can make the availability much higher because \texttt{removenode}
 theoretically involves almost every node in the cluster transferring
-data between themselves, and therefore finishing very quickly.
+data between themselves, which decreases ${E[T_{recovery}]}$ in
+Eq. \ref{outage} and limits outage.
 
 This approach is likely unwise in production, however, as unlike
 \texttt{replace\_address}, \texttt{removenode} causes operational load
@@ -518,12 +512,11 @@ it up)}
 \end{enumerate}
 
 Inbound network traffic is particularly problematic because unlike
-\textit{outbound} network traffic which can be effectively be controlled
-via QoS \cite{qos}, \textit{inbound} network traffic is very difficult
-to insulate query traffic from, and would likely cause operational impact.
-In contrast, with \texttt{replace\_address} the cluster operator can use
-\texttt{tc-fq} to insulate query traffic from the streaming flows
-\cite{tc-fq}
+outbound network traffic which can be effectively be controlled
+via QoS \cite{qos}, inbound network traffic is very difficult to insulate
+query traffic from, and would likely cause operational impact. In contrast,
+with \texttt{replace\_address} the cluster operator can use \texttt{tc-fq}
+insulate query traffic from the streaming flows \cite{tc-fq}
 
 This approach would require significant production vetting before we
 believe it is a viable alternative to the production hardened
@@ -532,12 +525,12 @@ believe it is a viable alternative to the production hardened
 \subsubsection{Solution 4: Stop Using vnodes Entirely}
 An alternative way to solve the operational pain of large Cassandra clusters,
 while maintaining availability, is to use \texttt{moves} rather than
-tokens to re-balance data in a cluster \cite{moves}. This could either happen
-through a central planner which determines the optimal state of the cluster,
-or some kind of distributed greedy algorithm. Now that Cassandra
-has good streaming via the Netty refactor, this appears to be a very
-plausible approach and has additional benefits in repair
-and scaling (simultaneous bootstrap).
+tokens to re-balance data in a cluster \cite{moves}\cite{movesp}. This
+could either happen through a central planner which determines the
+optimal state of the cluster, or some kind of distributed greedy
+algorithm. Now that Cassandra has good streaming via the Netty refactor,
+this appears to be a very plausible approach and has additional benefits
+in repair and scaling (simultaneous bootstrap).
 
 \section{Conclusion}
 
@@ -558,6 +551,10 @@ worth understanding how vnodes have changed the math.
 \bibitem{vnodes}
 Brandon Williams: Virtual nodes in Cassandra 1.2
 \path{https://www.datastax.com/dev/blog/virtual-nodes-in-cassandra-1-2}
+
+\bibitem{vnodesemail}
+Sam Overton: RFC: Cassandra Virtual Nodes
+\path{https://www.mail-archive.com/dev@cassandra.apache.org/msg03837.html}
 
 \bibitem{karger}
 Karger, et. al. Consistent Hashing and Random Trees: Distributed Caching Protocols for Relieving Hot Spots on the World Wide Web
@@ -587,6 +584,10 @@ Apache Software Foundation: nodetool removenode
 Branimir Lambov: New token allocation algorithm in Cassandra 3.0
 \path{https://www.datastax.com/dev/blog/token-allocation-algorithm}
 
+\bibitem{novnodes}
+Chris Lohfink: Lower default num\_tokens
+\path{https://issues.apache.org/jira/browse/CASSANDRA-13701}
+
 \bibitem{ebs}
 Jim Plush and Dennis Opacki: Amazon EBS \& Cassandra
 \path{https://www.youtube.com/watch?v=1R-mgOcOSd4}
@@ -602,6 +603,10 @@ Eric Dumazet: Fair Queue packet scheduler
 \bibitem{moves}
 Apache Software Foundation: nodetool move
 \path{http://cassandra.apache.org/doc/latest/operating/topo_changes.html#moving-nodes}
+
+\bibitem{movesp}
+Stu Hood: Automatic, online load balancing
+\path{https://issues.apache.org/jira/browse/CASSANDRA-1418}
 
 \end{thebibliography}
 
