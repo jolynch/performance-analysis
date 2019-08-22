@@ -2,13 +2,13 @@ from setuptools import setup
 
 
 setup(
-    name='python_performance_toolkit',
+    name='performance-toolkit',
     description=(
         'Some one off performance scripts. Note this is not a python package, '
         'but rather a collection of useful scripts and notebooks. Each script '
         'has it\'s own dependencies (which are typically minimal)'
     ),
-    url='https://github.com/jolynch/python_performance_toolkit',
+    url='https://github.com/jolynch/performance-toolkit',
     version='1.0.0',
     author='Joseph Lynch',
     author_email='joe.e.lynch@gmail.com',
