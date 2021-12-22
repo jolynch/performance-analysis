@@ -42,9 +42,11 @@ class RequestSimulator(object):
 
         self.env = simpy.Environment()
         count, cap = self.worker_desc
-        self.workers = [
-            simpy.Resource(self.env, capacity=cap) for i in range(count)
-        ]
+        self.workers = []
+        for i in range(count):
+            worker = simpy.Resource(self.env, capacity=cap)
+            worker.zone = "abc"[i % 3]
+            self.workers.append(worker)
         self.env.process(self.generate_requests())
         self.env.run()
 
@@ -73,7 +75,7 @@ class RequestSimulator(object):
 
             # Let the operation take w.e. amount of time the latency
             # function tells us to
-            yield self.env.timeout(self.latency_fn(request_id))
+            yield self.env.timeout(self.latency_fn(request_id, worker))
 
             t_done = self.env.now
             t_processing = t_done - t_start
