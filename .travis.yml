@@ -6,6 +6,5 @@ script:
 
 matrix:
   include:
-  - env: TOXENV=py27
-  - env: TOXENV=py38
-    python: 3.8
+  - env: TOXENV=py310
+    python: 3.10

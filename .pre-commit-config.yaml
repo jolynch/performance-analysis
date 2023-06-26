@@ -1,10 +1,11 @@
+repos:
 - repo: https://github.com/pre-commit/pre-commit-hooks.git
-  sha: v0.7.1
+  rev: v0.7.1
   hooks:
     - id: trailing-whitespace
     - id: flake8
     - id: autopep8-wrapper
 - repo: https://github.com/asottile/reorder_python_imports.git
-  sha: v0.3.2
+  rev: v0.3.2
   hooks:
     - id: reorder-python-imports
